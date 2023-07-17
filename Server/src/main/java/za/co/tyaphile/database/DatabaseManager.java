@@ -3,11 +3,11 @@ package za.co.tyaphile.database;
 
 import za.co.tyaphile.BankServer;
 import za.co.tyaphile.account.Account;
+import za.co.tyaphile.card.Card;
 import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.info.Info;
 import za.co.tyaphile.user.User;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -16,6 +16,8 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class DatabaseManager {
     private static Connection connection;
@@ -35,34 +37,232 @@ public class DatabaseManager {
         }
     }
 
-    public static List<Map<String, Object>> getTransactions() {
-        String sql = "SELECT * FROM transact";
-        List<Map<String, Object>> transactions = new ArrayList<>();
-        PreparedStatement ps;
+    public static boolean openAccount(User user, String admin) {
+        String sql;
+
+        if(!user.getAccount().isOnHold()) {
+            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type) VALUES (?, ?, ?, ?);";
+        } else {
+            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type, account_hold) VALUES (?, ?, ?, ?, ?);";
+            user.getAccount().setOnHold(user.getAccount().isOnHold(), user.getAccount().getNotes().get(0));
+        }
 
         try {
             setConnection();
-            ps = connection.prepareStatement(sql);
+            PreparedStatement ps = connection.prepareStatement(sql);
+            ps.setLong(1, Long.parseLong(user.getAccount().getAccountNumber()));
+            ps.setString(2, user.getAccount().getName());
+            ps.setString(3, user.getAccount().getSurname());
+            ps.setString(4, user.getAccount().getAccountType());
+
+            if(user.getAccount().isOnHold()) {
+                ps.setBoolean(5, user.getAccount().isOnHold());
+            }
+
+            ps.executeUpdate();
+
+            return true;
+        } catch (SQLException e) {
+            printStackTrace("SQL Error", e);
+        }
+        return false;
+    }
+
+    public static List<Map<String, Object>> getAccounts() {
+        List<Map<String, Object>> accounts = new ArrayList<>();
+        String sql = "SELECT * FROM accounts";
+
+        try {
+            setConnection();
+            PreparedStatement ps = connection.prepareStatement(sql);
             ResultSet rs = ps.executeQuery();
-            while(rs.next()) {
-                Map<String, Object> transaction = new HashMap<>();
 
-                transaction.put("transaction_id", rs.getLong("transact_id"));
-                transaction.put("account_from", rs.getLong("transact_account"));
-                transaction.put("account_to", rs.getLong("transact_beneficiary"));
-                transaction.put("description", rs.getString("transact_description"));
-                transaction.put("transaction_time", rs.getTimestamp("transact_date"));
-                transaction.put("transaction_type", rs.getString("transact_type"));
-                transaction.put("amount", rs.getDouble("transaction_amount"));
-
-                transactions.add(transaction);
+            while (rs.next()) {
+                Map<String, Object> account = new HashMap<>();
+                account.put("name", rs.getString("customer_name"));
+                account.put("surname", rs.getString("customer_surname"));
+                account.put("account_number", rs.getString("account_no"));
+                account.put("type", rs.getString("account_type"));
+                account.put("balance", rs.getDouble("balance"));
+                accounts.add(account);
             }
         } catch (SQLException e) {
-            printStackTrace("Transaction get error", e);
+            printStackTrace("Account fetch error", e);
         }
 
-        return transactions;
+        return accounts;
     }
+
+    public static boolean setBalance(Map<String, Object> transact) {
+        String sql = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
+        String sqlTrans = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description, transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
+        try {
+            setConnection();
+            connection.setAutoCommit(false);
+
+            PreparedStatement ps = connection.prepareStatement(sqlTrans);
+            ps.setLong(1, Long.parseLong(transact.get("account_from").toString()));
+            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.setString(3, transact.get("description").toString());
+            ps.setString(4, transact.get("transaction_type").toString());
+            ps.setDouble(5, Double.parseDouble(transact.get("amount").toString()));
+            ps.executeUpdate();
+
+            ps = connection.prepareStatement(sql);
+            ps.setDouble(1, Double.parseDouble(transact.get("amount").toString()));
+            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.executeUpdate();
+
+            connection.commit();
+            return true;
+        } catch (SQLException e) {
+            printStackTrace("Balance check error", e);
+            try {
+                connection.rollback();
+            } catch (SQLException ex) {
+                printStackTrace("Error", ex);
+            }
+        }
+        return false;
+    }
+
+    public static synchronized boolean makeTransaction(Map<String, Object> transact) {
+        String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
+                " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
+        String sqlUpdatePayer = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
+        String sqlUpdateRecipient = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
+
+        try {
+            setConnection();
+            connection.setAutoCommit(false);
+            PreparedStatement ps = connection.prepareStatement(sql);
+
+            ps.setLong(1, Long.parseLong(transact.get("account_from").toString()));
+            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.setString(3, transact.get("description").toString());
+            ps.setString(4, transact.get("transaction_type").toString());
+            ps.setDouble(5, Double.parseDouble(transact.get("amount").toString()));
+            ps.executeUpdate();
+
+            ps = connection.prepareStatement(sqlUpdatePayer);
+            ps.setDouble(1, -Double.parseDouble(transact.get("amount").toString()));
+            ps.setLong(2, Long.parseLong(transact.get("account_from").toString()));
+            ps.executeUpdate();
+
+            ps = connection.prepareStatement(sqlUpdateRecipient);
+            ps.setDouble(1, Double.parseDouble(transact.get("amount").toString()));
+            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.executeUpdate();
+
+            connection.commit();
+            return true;
+        } catch (SQLException e) {
+            printStackTrace("Deposit error", e);
+            try {
+                connection.rollback();
+            } catch (SQLException ex) {
+                printStackTrace("Rollback error", ex);
+            }
+        }
+        return false;
+    }
+
+    public static boolean issueCard(User user, String admin) throws SQLException {
+        if(user.getAccount().isOnHold()) {
+            addNote(user.getAccount().getAccountNumber(), admin, user.getAccount().getHoldReason());
+            return false;
+        }
+
+        String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
+        setConnection();
+        user.issueCard();
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, user.getLastCardIssued().formatCardNumber(user.getLastCardIssued().getCardNumber()));
+        ps.setString(2, user.getLastCardIssued().getCardPin());
+        ps.setString(3, user.getLastCardIssued().getCVV());
+        ps.setLong(4, Long.parseLong(user.getAccount().getAccountNumber()));
+
+        ps.executeUpdate();
+        return true;
+    }
+
+    public static List<Map<String, Object>> getLinkedCards(String param) throws SQLException {
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=?;";
+        List<Map<String, Object>> cards = new ArrayList<>();
+        setConnection();
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, param);
+        ResultSet rs = ps.executeQuery();
+        while (rs.next()) {
+            Map<String, Object> card = new HashMap<>();
+            String cardNumber = rs.getString("card_no");
+            card.put("card_no", cardNumber);
+            card.put("card_pin", rs.getString("card_pin"));
+            card.put("card_cvv", rs.getString("card_cvv"));
+
+            card.put("card_fraud", rs.getBoolean("card_fraud"));
+            card.put("card_hold", rs.getBoolean("card_hold"));
+            card.put("remarks",getNotes(cardNumber));
+            cards.add(card);
+        }
+        return cards;
+    }
+
+    public static void addNote(String link_to, String admin, String notes) {
+        String sql = "INSERT INTO notes (notes_link_to, added_by, notes) VALUES (?, ?, ?);";
+        try {
+            setConnection();
+            PreparedStatement ps = connection.prepareStatement(sql);
+            ps.setString(1, link_to);
+            ps.setString(2, admin);
+            ps.setString(3, notes);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            printStackTrace("Note error", e);
+        }
+    }
+
+    public static List<String> getNotes(String param) throws SQLException {
+        String sql = "SELECT * FROM notes WHERE notes_link_to=?;";
+        List<String> notes = new ArrayList<>();
+        setConnection();
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, param);
+        ResultSet rs = ps.executeQuery();
+        while (rs.next()) {
+            notes.add("{ " + rs.getString("added_by") + " } " + rs.getString("notes"));
+        }
+        return notes;
+    }
+
+//    public static List<Map<String, Object>> getTransactions() {
+//        String sql = "SELECT * FROM transact";
+//        List<Map<String, Object>> transactions = new ArrayList<>();
+//        PreparedStatement ps;
+//
+//        try {
+//            setConnection();
+//            ps = connection.prepareStatement(sql);
+//            ResultSet rs = ps.executeQuery();
+//            while(rs.next()) {
+//                Map<String, Object> transaction = new HashMap<>();
+//
+//                transaction.put("transaction_id", rs.getLong("transact_id"));
+//                transaction.put("account_from", rs.getLong("transact_account"));
+//                transaction.put("account_to", rs.getLong("transact_beneficiary"));
+//                transaction.put("description", rs.getString("transact_description"));
+//                transaction.put("transaction_time", rs.getTimestamp("transact_date"));
+//                transaction.put("transaction_type", rs.getString("transact_type"));
+//                transaction.put("amount", rs.getDouble("transaction_amount"));
+//
+//                transactions.add(transaction);
+//            }
+//        } catch (SQLException e) {
+//            printStackTrace("Transaction get error", e);
+//        }
+//
+//        return transactions;
+//    }
 
 //    public static List<Map<String, Object>> getTransactions(Map<String, Object> transaction) {
 //        String sql;
@@ -164,109 +364,8 @@ public class DatabaseManager {
 //        return transactions;
 //    }
 
-    public static boolean setBalance(Map<String, Object> transact, double amount) {
-        String sql = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
-        String sqlTrans = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description, transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
-        try {
-            setConnection();
-            connection.setAutoCommit(false);
-
-            PreparedStatement ps = connection.prepareStatement(sqlTrans);
-            ps.setLong(1, (long) transact.get("account_from"));
-            ps.setLong(2, (long) transact.get("account_to"));
-            ps.setString(3, transact.get("description").toString());
-            ps.setString(4, transact.get("transaction_type").toString());
-            ps.setDouble(5, amount);
-            ps.executeUpdate();
-
-            ps = connection.prepareStatement(sql);
-            ps.setDouble(1, (Double) transact.get("amount"));
-            ps.setLong(2, (long) transact.get("account_to"));
-            ps.executeUpdate();
-
-            connection.commit();
-            return true;
-        } catch (SQLException e) {
-            printStackTrace("Balance check error", e);
-            try {
-                connection.rollback();
-            } catch (SQLException ex) {
-                printStackTrace("Error", ex);
-            }
-        }
-        return false;
-    }
-
-//    public static synchronized boolean makeTransaction(Transaction transact) {
-//        String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description, transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
-//        String sqlUpdatePayee = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
-//        String sqlUpdateRecipient = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
-//
-//        try {
-//            setConnection();
-//            connection.setAutoCommit(false);
-//            PreparedStatement ps = connection.prepareStatement(sql);
-//
-//            ps.setLong(1, transact.getAccountFrom());
-//            ps.setLong(2, transact.getAccountTo());
-//            ps.setString(3, transact.getTransactionDescription());
-//            ps.setDouble(5, transact.getAmount());
-//            if(transact.isDeposit()) {
-//                ps.setString(4, "Deposit");
-//            } else if (transact.isWithdrawal()) {
-//                ps.setString(4, "Withdrawal");
-//            } else {
-//                ps.setString(4, transact.getTransactionType());
-//            }
-//            ps.executeUpdate();
-//
-//            ps = connection.prepareStatement(sqlUpdatePayee);
-//            ps.setDouble(1, -transact.getAmount());
-//            ps.setLong(2, transact.getAccountFrom());
-//            ps.executeUpdate();
-//
-//            ps = connection.prepareStatement(sqlUpdateRecipient);
-//            ps.setDouble(1, transact.getAmount());
-//            ps.setLong(2, transact.getAccountTo());
-//            ps.executeUpdate();
-//
-//            connection.commit();
-//            return true;
-//        } catch (SQLException e) {
-//            printStackTrace("Deposit error", e);
-//            try {
-//                connection.rollback();
-//            } catch (SQLException ex) {
-//                printStackTrace("Rollback error", ex);
-//            }
-//        }
-//        return false;
-//    }
-
-//    public static List<Account> getAccounts() {
-//        List<Account> accounts = new ArrayList<>();
-//        String sql = "SELECT * FROM accounts";
-//
-//        try {
-//            setConnection();
-//            PreparedStatement ps = connection.prepareStatement(sql);
-//            ResultSet rs = ps.executeQuery();
-//
-//            while (rs.next()) {
-//                Account account = new Account(rs.getString("customer_name"), rs.getString("customer_surname"),
-//                        rs.getString("account_no"), rs.getString("account_type"));
-//                account.setBalance(rs.getDouble("balance"));
-//                accounts.add(account);
-//            }
-//        } catch (SQLException e) {
-//            printStackTrace("Account fetch error", e);
-//        }
-//
-//        return accounts;
-//    }
-
-//    public static List<za.co.tyaphile.user.User> getAccounts(String search, String accountType) {
-//        List<za.co.tyaphile.user.User> accounts = new ArrayList<>();
+//    public static List<Map<String, Object>> getAccounts(String search, String accountType) {
+//        List<Map<String, Object>> accounts = new ArrayList<>();
 //        String sqlAcc;
 //        Connection conn;
 //        PreparedStatement prep;
@@ -280,6 +379,14 @@ public class DatabaseManager {
 //                    "INNER JOIN cards ON account_no=card_linked_account " +
 //                    "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) AND account_type=? GROUP BY account_no;";
 //        }
+//
+////                Map<String, Object> account = new HashMap<>();
+////                account.put("name", rs.getString("customer_name"));
+////                account.put("surname", rs.getString("customer_surname"));
+////                account.put("account_number", rs.getString("account_no"));
+////                account.put("type", rs.getString("account_type"));
+////                account.put("balance", rs.getDouble("balance"));
+////                accounts.add(account);
 //
 //        try {
 //            if(BankServer.isMySQL()) {
@@ -320,7 +427,9 @@ public class DatabaseManager {
 //                    account.setClosed(rs.getBoolean("account_close"), notes.get(notes.size() - 1));
 //                    account.setOnHold(rs.getBoolean("account_hold"), notes.get(notes.size() - 1));
 //                }
-//                List<Card> cards = getLinkedCards(account.getAccountNumber());
+//                for (Card card: getLinkedCards(account.getAccountNumber())) {
+//
+//                }
 //                account.getNotes().clear();
 //                account.getNotes().addAll(notes);
 //                za.co.tyaphile.user.User user = new za.co.tyaphile.user.User(cards.get(cards.size() - 1), account, cards);
@@ -332,41 +441,6 @@ public class DatabaseManager {
 //
 //        return accounts;
 //    }
-
-    public static boolean openAccount(Account account, String admin) {
-        User user = new User(account.getName(), account.getSurname(), account.getAccountType());
-
-        String sql;
-
-        if(!account.isOnHold()) {
-            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type) VALUES (?, ?, ?, ?);";
-        } else {
-            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type, account_hold) VALUES (?, ?, ?, ?, ?);";
-            user.getAccount().setOnHold(account.isOnHold(), account.getNotes().get(0));
-        }
-
-        try {
-            setConnection();
-            PreparedStatement ps = connection.prepareStatement(sql);
-            ps.setLong(1, Long.parseLong(user.getAccount().getAccountNumber()));
-            ps.setString(2, user.getAccount().getName());
-            ps.setString(3, user.getAccount().getSurname());
-            ps.setString(4, user.getAccount().getAccountType());
-
-            if(account.isOnHold()) {
-                ps.setBoolean(5, user.getAccount().isOnHold());
-            }
-
-            ps.executeUpdate();
-
-            issueCard(user, admin);
-
-            return true;
-        } catch (SQLException e) {
-            printStackTrace("SQL Error", e);
-        }
-        return false;
-    }
 
 //    public static boolean accountHold(Account account) {
 //        String sql = "UPDATE accounts SET account_hold=? WHERE account_no=?";
@@ -450,71 +524,6 @@ public class DatabaseManager {
 //        addNote(card.getCardNumber(), card.getAdmin(), card.getStopReason());
 //    }
 
-    private static void issueCard(User user, String admin) throws SQLException {
-        String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
-        setConnection();
-        user.issueCard();
-        PreparedStatement ps = connection.prepareStatement(sql);
-        ps.setString(1, user.getLastCardIssued().formatCardNumber(user.getLastCardIssued().getCardNumber()));
-        ps.setString(2, user.getLastCardIssued().getCardPin());
-        ps.setString(3, user.getLastCardIssued().getCVV());
-        ps.setLong(4, Long.parseLong(user.getAccount().getAccountNumber()));
-
-        ps.executeUpdate();
-
-        if(user.getAccount().isOnHold()) {
-            addNote(user.getAccount().getAccountNumber(), admin, user.getAccount().getHoldReason());
-        }
-    }
-
-//    private static List<Card> getLinkedCards(String param) throws SQLException {
-//        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=?;";
-//        List<Card> cards = new ArrayList<>();
-//        setConnection();
-//        PreparedStatement ps = connection.prepareStatement(sql);
-//        ps.setString(1, param);
-//        ResultSet rs = ps.executeQuery();
-//        while (rs.next()) {
-//            Card card = new Card(rs.getString("card_no"), rs.getString("card_pin"), rs.getString("card_cvv"));
-//            card.setFRAUD(rs.getBoolean("card_fraud"));
-//            card.setSTOP(rs.getBoolean("card_hold"));
-//            cards.add(card);
-//        }
-//
-//        for (Card c : cards) {
-//            c.getNotes().addAll(getNotes(c.getCardNumber()));
-//        }
-//
-//        return cards;
-//    }
-
-    private static void addNote(String link_to, String admin, String notes) {
-        String sql = "INSERT INTO notes (notes_link_to, added_by, notes) VALUES (?, ?, ?);";
-        try {
-            setConnection();
-            PreparedStatement ps = connection.prepareStatement(sql);
-            ps.setString(1, link_to);
-            ps.setString(2, admin);
-            ps.setString(3, notes);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            printStackTrace("Note error", e);
-        }
-    }
-
-    private static List<String> getNotes(String param) throws SQLException {
-        String sql = "SELECT * FROM notes WHERE notes_link_to=?;";
-        List<String> notes = new ArrayList<>();
-        setConnection();
-        PreparedStatement ps = connection.prepareStatement(sql);
-        ps.setString(1, param);
-        ResultSet rs = ps.executeQuery();
-        while (rs.next()) {
-            notes.add("{ " + rs.getString("added_by") + " } " + rs.getString("notes"));
-        }
-        return notes;
-    }
-
     private static void setConnection() throws SQLException{
         if(connection == null) {
             if (BankServer.isMySQL()) {
@@ -559,7 +568,7 @@ public class DatabaseManager {
 
     public DatabaseManager() {
         if(BankServer.isMySQL()) {
-            System.out.println("MySQL");
+//            System.out.println("MySQL");
             accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
                     "\taccount_id BIGINT AUTO_INCREMENT PRIMARY KEY, \n" +
                     "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
@@ -603,7 +612,7 @@ public class DatabaseManager {
                     "    notes BLOB NOT NULL\n" +
                     ");";
         } else {
-            System.out.println("SQLite");
+//            System.out.println("SQLite");
             accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
                     "\taccount_id INTEGER PRIMARY KEY, \n" +
                     "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
