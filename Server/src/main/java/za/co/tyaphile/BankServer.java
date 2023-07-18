@@ -521,7 +521,7 @@ public class BankServer implements Executor {
     private void init() {
         DatabaseManager dbm = new DatabaseManager();
         if (MySQL) {
-            Connect.createDatabase(Info.getDatabaseName(), Info.getROOT(), Info.getPASSWORD());
+            Connect.createDatabase(Info.getDatabaseName(true), Info.getROOT(), Info.getPASSWORD());
         }
         DatabaseManager.createTables();
     }

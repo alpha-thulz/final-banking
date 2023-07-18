@@ -8,14 +8,12 @@ import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.info.Info;
 import za.co.tyaphile.user.User;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Date;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -93,7 +91,7 @@ public class DatabaseManager {
         return accounts;
     }
 
-    public static boolean setBalance(Map<String, Object> transact) {
+    public static boolean setBalance(long from, long to, String desc, String type, double amount) {
         String sql = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
         String sqlTrans = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description, transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
         try {
@@ -101,16 +99,16 @@ public class DatabaseManager {
             connection.setAutoCommit(false);
 
             PreparedStatement ps = connection.prepareStatement(sqlTrans);
-            ps.setLong(1, Long.parseLong(transact.get("account_from").toString()));
-            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
-            ps.setString(3, transact.get("description").toString());
-            ps.setString(4, transact.get("transaction_type").toString());
-            ps.setDouble(5, Double.parseDouble(transact.get("amount").toString()));
+            ps.setLong(1, from);
+            ps.setLong(2, to);
+            ps.setString(3, desc);
+            ps.setString(4, type);
+            ps.setDouble(5, amount);
             ps.executeUpdate();
 
             ps = connection.prepareStatement(sql);
-            ps.setDouble(1, Double.parseDouble(transact.get("amount").toString()));
-            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.setDouble(1, amount);
+            ps.setLong(2, to);
             ps.executeUpdate();
 
             connection.commit();
@@ -126,7 +124,7 @@ public class DatabaseManager {
         return false;
     }
 
-    public static synchronized boolean makeTransaction(Map<String, Object> transact) {
+    public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount) {
         String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
                 " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
         String sqlUpdatePayer = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
@@ -137,21 +135,21 @@ public class DatabaseManager {
             connection.setAutoCommit(false);
             PreparedStatement ps = connection.prepareStatement(sql);
 
-            ps.setLong(1, Long.parseLong(transact.get("account_from").toString()));
-            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
-            ps.setString(3, transact.get("description").toString());
-            ps.setString(4, transact.get("transaction_type").toString());
-            ps.setDouble(5, Double.parseDouble(transact.get("amount").toString()));
+            ps.setLong(1, from);
+            ps.setLong(2, to);
+            ps.setString(3, desc);
+            ps.setString(4, type);
+            ps.setDouble(5, amount);
             ps.executeUpdate();
 
             ps = connection.prepareStatement(sqlUpdatePayer);
-            ps.setDouble(1, -Double.parseDouble(transact.get("amount").toString()));
-            ps.setLong(2, Long.parseLong(transact.get("account_from").toString()));
+            ps.setDouble(1, -amount);
+            ps.setLong(2, from);
             ps.executeUpdate();
 
             ps = connection.prepareStatement(sqlUpdateRecipient);
-            ps.setDouble(1, Double.parseDouble(transact.get("amount").toString()));
-            ps.setLong(2, Long.parseLong(transact.get("account_to").toString()));
+            ps.setDouble(1, amount);
+            ps.setLong(2, to);
             ps.executeUpdate();
 
             connection.commit();
@@ -235,134 +233,111 @@ public class DatabaseManager {
         return notes;
     }
 
-//    public static List<Map<String, Object>> getTransactions() {
-//        String sql = "SELECT * FROM transact";
-//        List<Map<String, Object>> transactions = new ArrayList<>();
-//        PreparedStatement ps;
-//
-//        try {
-//            setConnection();
-//            ps = connection.prepareStatement(sql);
-//            ResultSet rs = ps.executeQuery();
-//            while(rs.next()) {
-//                Map<String, Object> transaction = new HashMap<>();
-//
-//                transaction.put("transaction_id", rs.getLong("transact_id"));
-//                transaction.put("account_from", rs.getLong("transact_account"));
-//                transaction.put("account_to", rs.getLong("transact_beneficiary"));
-//                transaction.put("description", rs.getString("transact_description"));
-//                transaction.put("transaction_time", rs.getTimestamp("transact_date"));
-//                transaction.put("transaction_type", rs.getString("transact_type"));
-//                transaction.put("amount", rs.getDouble("transaction_amount"));
-//
-//                transactions.add(transaction);
-//            }
-//        } catch (SQLException e) {
-//            printStackTrace("Transaction get error", e);
-//        }
-//
-//        return transactions;
-//    }
+    public static List<Map<String, Object>> getTransactions() {
+        String sql = "SELECT * FROM transact";
+        List<Map<String, Object>> transactions = new ArrayList<>();
+        PreparedStatement ps;
 
-//    public static List<Map<String, Object>> getTransactions(Map<String, Object> transaction) {
-//        String sql;
-//
-//        if (transaction.getAccountTo() == 0 && transaction.getAccountFrom() == 0) {
-//            sql = "SELECT * FROM transact WHERE transact_date > ?;";
-//        } else if (transaction.getAccountFrom() == transaction.getAccountTo()) {
-//            sql = "SELECT *, CASE \n" +
-//                    "WHEN transact_account=? THEN (@s := @s - transaction_amount) \n" +
-//                    "WHEN transact_beneficiary=? THEN (@s := @s + transaction_amount) \n" +
-//                    "END AS Balance\n" +
-//                    "FROM finance_db.transact\n" +
-//                    "INNER JOIN (SELECT @s := 0) p \n" +
-//                    "WHERE (transact_account=? OR transact_beneficiary=?) AND transact_date > ?;";
-//        } else {
-//            if(transaction.getAccountFrom() > 0 && transaction.getAccountTo() == 0) {
-//                sql = "SELECT *, CASE \n" +
-//                        "WHEN transact_account=? THEN (@s := @s - transaction_amount) \n" +
-//                        "WHEN transact_beneficiary=? THEN (@s := @s + transaction_amount) \n" +
-//                        "END AS Balance\n" +
-//                        "FROM finance_db.transact\n" +
-//                        "INNER JOIN (SELECT @s := 0) p \n" +
-//                        "WHERE (transact_account=? AND transact_date > ?);";
-//            } else if (transaction.getAccountTo() > 0 && transaction.getAccountFrom() == 0) {
-//                sql = "SELECT *, CASE \n" +
-//                        "WHEN transact_account=? THEN (@s := @s - transaction_amount) \n" +
-//                        "WHEN transact_beneficiary=? THEN (@s := @s + transaction_amount) \n" +
-//                        "END AS Balance\n" +
-//                        "FROM finance_db.transact\n" +
-//                        "INNER JOIN (SELECT @s := 0) p \n" +
-//                        "WHERE (transact_beneficiary=? AND transact_date > ?);";
-//            } else {
-//                sql = "SELECT *, CASE \n" +
-//                        "WHEN transact_account=? THEN (@s := @s - transaction_amount) \n" +
-//                        "WHEN transact_beneficiary=? THEN (@s := @s + transaction_amount) \n" +
-//                        "END AS Balance\n" +
-//                        "FROM finance_db.transact\n" +
-//                        "INNER JOIN (SELECT @s := 0) p \n" +
-//                        "WHERE (transact_account=? AND transact_beneficiary=?) AND transact_date > ?;";
-//            }
-//        }
-//
-//        List<Map<String, Object>> transactions = new ArrayList<>();
-//
-//        try {
-//            setConnection();
-//            System.out.println(sql);
-//            PreparedStatement ps = connection.prepareStatement(sql);
-//
-//            if (transaction.getAccountTo() == 0 && transaction.getAccountFrom() == 0) {
-//                ps.setTimestamp(1, transaction.getTransactionDate());
-//            } else if (transaction.getAccountFrom() == transaction.getAccountTo()) {
-//                ps.setLong(3, transaction.getAccountFrom());
-//                ps.setLong(4, transaction.getAccountTo());
-//                ps.setTimestamp(5, transaction.getTransactionDate());
-//            } else {
-//                if(transaction.getAccountFrom() > 0 && transaction.getAccountTo() == 0) {
-//                    ps.setLong(3, transaction.getAccountFrom());
-//                    ps.setTimestamp(4, transaction.getTransactionDate());
-//                } else if (transaction.getAccountTo() > 0 && transaction.getAccountFrom() == 0) {
-//                    ps.setLong(3, transaction.getAccountTo());
-//                    ps.setTimestamp(4, transaction.getTransactionDate());
-//                } else {
-//                    ps.setLong(3, transaction.getAccountFrom());
-//                    ps.setLong(4, transaction.getAccountTo());
-//                    ps.setTimestamp(5, transaction.getTransactionDate());
-//                }
-//            }
-//
-//            if (!(transaction.getAccountTo() == 0 && transaction.getAccountFrom() == 0)) {
-//                ps.setLong(1, transaction.getAccountFrom());
-//                ps.setLong(2, transaction.getAccountTo());
-//            }
-//
-//            ResultSet rs = ps.executeQuery();
-//            while (rs.next()) {
-//                Map<String, Object> trans = new HashMap<>();
-//
-//                trans.put("transaction_id", rs.getLong("transact_id"));
-//                trans.put("account_from", rs.getLong("transact_account"));
-//                trans.put("account_to", rs.getLong("transact_beneficiary"));
-//                trans.put("description", rs.getString("transact_description"));
-//                trans.put("transaction_time", rs.getTimestamp("transact_date"));
-//                trans.put("transaction_type", rs.getString("transact_type"));
-//                trans.put("amount", rs.getDouble("transaction_amount"));
-//
-//                if (!(transaction.getAccountTo() == 0 && transaction.getAccountFrom() == 0)) {
-//                    trans.setBalance(rs.getLong("Balance"));
-//                }
-//
-//                transactions.add(trans);
-//            }
-//            System.out.println();
-//        } catch (SQLException e) {
-//            printStackTrace("Get transaction error", e);
-//        }
-//
-//
-//        return transactions;
-//    }
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ResultSet rs = ps.executeQuery();
+            while(rs.next()) {
+                Map<String, Object> transaction = new HashMap<>();
+
+                transaction.put("transaction_id", rs.getLong("transact_id"));
+                transaction.put("account_from", rs.getLong("transact_account"));
+                transaction.put("account_to", rs.getLong("transact_beneficiary"));
+                transaction.put("description", rs.getString("transact_description"));
+                transaction.put("transaction_time", rs.getTimestamp("transact_date"));
+                transaction.put("transaction_type", rs.getString("transact_type"));
+                transaction.put("amount", rs.getDouble("transaction_amount"));
+
+                transactions.add(transaction);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Transaction get error", e);
+        }
+
+        return transactions;
+    }
+
+    public static List<Map<String, Object>> getTransactions(long accFrom, long accTo, Timestamp fromDate) {
+        String sql;
+
+        if (accFrom == 0 && accTo == 0) {
+            sql = "SELECT * FROM transact WHERE transact_date > ? ORDER BY transact_id DESC;";
+        } else{
+            if (accFrom > 0 && accTo == 0) {
+                sql = "SELECT *, sum( CASE " +
+                        "WHEN transact_account=" + accFrom + " THEN 0 - transaction_amount " +
+                        "WHEN transact_beneficiary=" + accFrom + " THEN 0 + transaction_amount " +
+                        "ELSE 0 END) " +
+                        "OVER (ORDER BY transact_id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balance FROM transact " +
+                        "WHERE (transact_account=? OR transact_beneficiary=?) AND transact_date >= ? ORDER BY transact_id DESC;";
+            } else if (accTo > 0 && accFrom == 0) {
+                sql = "SELECT *, sum( CASE " +
+                        "WHEN transact_account=" + accTo + " THEN 0 - transaction_amount " +
+                        "WHEN transact_beneficiary=" + accTo + " THEN 0 + transaction_amount " +
+                        "ELSE 0 END) " +
+                        "OVER (ORDER BY transact_id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balance FROM transact " +
+                        "WHERE (transact_account=? OR transact_beneficiary=?) AND transact_date >= ? ORDER BY transact_id DESC;";
+            } else {
+                sql = "SELECT * FROM transact WHERE (transact_account=? OR transact_beneficiary=?) AND transact_date >= ? ORDER BY transact_id DESC;";
+            }
+        }
+
+        List<Map<String, Object>> transactions = new ArrayList<>();
+
+        try {
+            setConnection();
+            System.out.println(sql);
+            PreparedStatement ps = connection.prepareStatement(sql);
+
+            if (accTo == 0 && accFrom == 0) {
+                ps.setTimestamp(1, fromDate);
+            } else {
+                if (accFrom > 0 && accTo == 0) {
+                    ps.setLong(1, accFrom);
+                    ps.setLong(2, accFrom);
+                    ps.setTimestamp(3, fromDate);
+                } else if (accTo > 0 && accFrom == 0) {
+                    ps.setLong(1, accTo);
+                    ps.setLong(2, accTo);
+                    ps.setTimestamp(3, fromDate);
+                } else {
+                    ps.setLong(1, accFrom);
+                    ps.setLong(2, accTo);
+                    ps.setTimestamp(3, fromDate);
+                }
+            }
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                Map<String, Object> trans = new HashMap<>();
+
+                trans.put("transaction_id", rs.getLong("transact_id"));
+                trans.put("account_from", rs.getLong("transact_account"));
+                trans.put("account_to", rs.getLong("transact_beneficiary"));
+                trans.put("description", rs.getString("transact_description"));
+                trans.put("transaction_time", rs.getTimestamp("transact_date"));
+                trans.put("transaction_type", rs.getString("transact_type"));
+                trans.put("amount", rs.getDouble("transaction_amount"));
+
+                if ((accFrom > 0 && accTo == 0) || (accTo > 0 && accFrom == 0)) {
+                    trans.put("balance", rs.getLong("Balance"));
+                }
+
+                transactions.add(trans);
+                System.out.println(trans);
+            }
+            System.out.println();
+        } catch (SQLException e) {
+            printStackTrace("Get transaction error", e);
+        }
+
+
+        return transactions;
+    }
 
 //    public static List<Map<String, Object>> getAccounts(String search, String accountType) {
 //        List<Map<String, Object>> accounts = new ArrayList<>();
@@ -527,9 +502,9 @@ public class DatabaseManager {
     private static void setConnection() throws SQLException{
         if(connection == null) {
             if (BankServer.isMySQL()) {
-                connection = Connect.getConnection(Info.getDatabaseName(), Info.getROOT(), Info.getPASSWORD());
+                connection = Connect.getConnection(Info.getDatabaseName(true), Info.getROOT(), Info.getPASSWORD());
             } else {
-                connection = Connect.getConnection(Info.getDatabaseName());
+                connection = Connect.getConnection(Info.getDatabaseName(false));
             }
         }
     }

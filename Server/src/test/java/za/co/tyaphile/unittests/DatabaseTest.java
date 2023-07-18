@@ -8,6 +8,8 @@ import za.co.tyaphile.user.User;
 
 import java.io.File;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,26 +37,24 @@ public class DatabaseTest {
 
     @Test
     void testSetBalance() {
-        Map<String, Object> transact = new HashMap<>();
-        transact.put("account_from", 1000000000);
-        transact.put("account_to", john.getAccount().getAccountNumber());
-        transact.put("description", "Account transfer");
-        transact.put("transaction_type", "payment");
-        transact.put("amount", 5000);
+        long from = 1000000000;
+        long to = Long.parseLong(john.getAccount().getAccountNumber());
+        String description = "Account transfer";
+        String type = "payment";
 
-        assertTrue(DatabaseManager.setBalance(transact));
+        assertTrue(DatabaseManager.setBalance(from , to, description, type, 5000));
+        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
     }
 
     @Test
     void testMakeTransaction() {
-        Map<String, Object> transact = new HashMap<>();
-        transact.put("account_from", john.getAccount().getAccountNumber());
-        transact.put("account_to", jane.getAccount().getAccountNumber());
-        transact.put("description", "Account transfer");
-        transact.put("transaction_type", "payment");
-        transact.put("amount", 2500);
+        long from = Long.parseLong(john.getAccount().getAccountNumber());
+        long to = Long.parseLong(jane.getAccount().getAccountNumber());
+        String description = "Account transfer";
+        String type = "payment";
 
-        assertTrue(DatabaseManager.makeTransaction(transact));
+        assertTrue(DatabaseManager.makeTransaction(from , to, description, type, 5000));
+        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
     }
 
     @Test
@@ -77,7 +77,7 @@ public class DatabaseTest {
         john = new User("John", "Doe", "Savings");
         jane = new User("Jane", "Doe", "Savings");
 
-        File file = new File("finance_db");
+        File file = new File("finance.db");
         file.delete();
 
         DatabaseManager.createTables();
@@ -98,7 +98,7 @@ public class DatabaseTest {
         dbm = null;
         DatabaseManager.closeConnection();
 
-        File file = new File("finance_db");
-        file.delete();
+        File file = new File("finance.db");
+//        file.delete();
     }
 }
