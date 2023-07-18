@@ -12,8 +12,8 @@ import java.sql.*;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
-import java.util.*;
 import java.util.Date;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -68,7 +68,7 @@ public class DatabaseManager {
 
     public static List<Map<String, Object>> getAccounts() {
         List<Map<String, Object>> accounts = new ArrayList<>();
-        String sql = "SELECT * FROM accounts";
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON account_no=card_linked_account GROUP BY account_no;";
 
         try {
             setConnection();
@@ -76,13 +76,13 @@ public class DatabaseManager {
             ResultSet rs = ps.executeQuery();
 
             while (rs.next()) {
-                Map<String, Object> account = new HashMap<>();
-                account.put("name", rs.getString("customer_name"));
-                account.put("surname", rs.getString("customer_surname"));
-                account.put("account_number", rs.getString("account_no"));
-                account.put("type", rs.getString("account_type"));
-                account.put("balance", rs.getDouble("balance"));
-                accounts.add(account);
+                Map<String, Object> acc = new HashMap<>();
+                acc.put("name", rs.getString("customer_name"));
+                acc.put("surname", rs.getString("customer_surname"));
+                acc.put("account_number", rs.getString("account_no"));
+                acc.put("type", rs.getString("account_type"));
+                acc.put("balance", rs.getDouble("balance"));
+                accounts.add(acc);
             }
         } catch (SQLException e) {
             printStackTrace("Account fetch error", e);
@@ -166,8 +166,7 @@ public class DatabaseManager {
     }
 
     public static boolean issueCard(User user, String admin) throws SQLException {
-        if(user.getAccount().isOnHold()) {
-            addNote(user.getAccount().getAccountNumber(), admin, user.getAccount().getHoldReason());
+        if(user.getAccount().isOnHold() || (user.getAllCards().size() > 0 && !user.getLastCardIssued().isSTOPPED())) {
             return false;
         }
 
@@ -180,8 +179,11 @@ public class DatabaseManager {
         ps.setString(3, user.getLastCardIssued().getCVV());
         ps.setLong(4, Long.parseLong(user.getAccount().getAccountNumber()));
 
-        ps.executeUpdate();
-        return true;
+        if (addNote(user.getAccount().getAccountNumber(), admin, "Issued new card")) {
+            ps.executeUpdate();
+            return true;
+        }
+        return false;
     }
 
     public static List<Map<String, Object>> getLinkedCards(String param) throws SQLException {
@@ -206,7 +208,7 @@ public class DatabaseManager {
         return cards;
     }
 
-    public static void addNote(String link_to, String admin, String notes) {
+    public static boolean addNote(String link_to, String admin, String notes) {
         String sql = "INSERT INTO notes (notes_link_to, added_by, notes) VALUES (?, ?, ?);";
         try {
             setConnection();
@@ -215,9 +217,11 @@ public class DatabaseManager {
             ps.setString(2, admin);
             ps.setString(3, notes);
             ps.executeUpdate();
+            return true;
         } catch (SQLException e) {
             printStackTrace("Note error", e);
         }
+        return false;
     }
 
     public static List<String> getNotes(String param) throws SQLException {
@@ -231,35 +235,6 @@ public class DatabaseManager {
             notes.add("{ " + rs.getString("added_by") + " } " + rs.getString("notes"));
         }
         return notes;
-    }
-
-    public static List<Map<String, Object>> getTransactions() {
-        String sql = "SELECT * FROM transact";
-        List<Map<String, Object>> transactions = new ArrayList<>();
-        PreparedStatement ps;
-
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ResultSet rs = ps.executeQuery();
-            while(rs.next()) {
-                Map<String, Object> transaction = new HashMap<>();
-
-                transaction.put("transaction_id", rs.getLong("transact_id"));
-                transaction.put("account_from", rs.getLong("transact_account"));
-                transaction.put("account_to", rs.getLong("transact_beneficiary"));
-                transaction.put("description", rs.getString("transact_description"));
-                transaction.put("transaction_time", rs.getTimestamp("transact_date"));
-                transaction.put("transaction_type", rs.getString("transact_type"));
-                transaction.put("amount", rs.getDouble("transaction_amount"));
-
-                transactions.add(transaction);
-            }
-        } catch (SQLException e) {
-            printStackTrace("Transaction get error", e);
-        }
-
-        return transactions;
     }
 
     public static List<Map<String, Object>> getTransactions(long accFrom, long accTo, Timestamp fromDate) {
@@ -291,7 +266,6 @@ public class DatabaseManager {
 
         try {
             setConnection();
-            System.out.println(sql);
             PreparedStatement ps = connection.prepareStatement(sql);
 
             if (accTo == 0 && accFrom == 0) {
@@ -328,19 +302,54 @@ public class DatabaseManager {
                 }
 
                 transactions.add(trans);
-                System.out.println(trans);
             }
-            System.out.println();
         } catch (SQLException e) {
             printStackTrace("Get transaction error", e);
         }
 
-
         return transactions;
     }
 
+    public static boolean accountHold(Account account, String admin) {
+        String sql = "UPDATE accounts SET account_close=?, account_hold=?  WHERE account_no=?";
+
+        try {
+            setConnection();
+            PreparedStatement ps = connection.prepareStatement(sql);
+            ps.setBoolean(1, account.isClosed());
+            ps.setBoolean(2, account.isOnHold());
+            ps.setString(3, account.getAccountNumber());
+            if (addNote(account.getAccountNumber(), admin, account.getCloseReason())) {
+                ps.executeUpdate();
+                return true;
+            }
+        } catch (SQLException e) {
+            printStackTrace("Account hold error", e);
+        }
+
+        return false;
+    }
+
+    public static boolean cardControl(Card card, String admin) {
+        try {
+            String sql = "UPDATE cards SET card_hold = ?, card_fraud = ? WHERE card_no = ?;";
+            setConnection();
+            PreparedStatement ps = connection.prepareStatement(sql);
+            ps.setBoolean(1, card.isSTOPPED());
+            ps.setBoolean(2, card.isFRAUD());
+            ps.setString(3, card.formatCardNumber(card.getCardNumber()));
+
+            if (addNote(card.getCardNumber(), admin, card.getStopReason())) {
+                ps.executeUpdate();
+                return true;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
 //    public static List<Map<String, Object>> getAccounts(String search, String accountType) {
-//        List<Map<String, Object>> accounts = new ArrayList<>();
 //        String sqlAcc;
 //        Connection conn;
 //        PreparedStatement prep;
@@ -354,14 +363,6 @@ public class DatabaseManager {
 //                    "INNER JOIN cards ON account_no=card_linked_account " +
 //                    "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) AND account_type=? GROUP BY account_no;";
 //        }
-//
-////                Map<String, Object> account = new HashMap<>();
-////                account.put("name", rs.getString("customer_name"));
-////                account.put("surname", rs.getString("customer_surname"));
-////                account.put("account_number", rs.getString("account_no"));
-////                account.put("type", rs.getString("account_type"));
-////                account.put("balance", rs.getDouble("balance"));
-////                accounts.add(account);
 //
 //        try {
 //            if(BankServer.isMySQL()) {
@@ -389,6 +390,17 @@ public class DatabaseManager {
 //            }
 //
 //            ResultSet rs = prep.executeQuery();
+//
+////                Map<String, Object> account = new HashMap<>();
+////                account.put("name", rs.getString("customer_name"));
+////                account.put("surname", rs.getString("customer_surname"));
+////                account.put("account_number", rs.getString("account_no"));
+////                account.put("type", rs.getString("account_type"));
+////                account.put("balance", rs.getDouble("balance"));
+////                accounts.add(account);
+//
+//            List<Map<String, Object>> accounts = new ArrayList<>();
+//
 //            while (rs.next()) {
 //                Account account = new Account(rs.getString("customer_name"), rs.getString("customer_surname"),
 //                        rs.getString("account_no"), rs.getString("account_type"));
@@ -415,88 +427,6 @@ public class DatabaseManager {
 //        }
 //
 //        return accounts;
-//    }
-
-//    public static boolean accountHold(Account account) {
-//        String sql = "UPDATE accounts SET account_hold=? WHERE account_no=?";
-//
-//        try {
-//            setConnection();
-//            PreparedStatement ps = connection.prepareStatement(sql);
-//            ps.setBoolean(1, account.isOnHold());
-//            ps.setString(2, account.getAccountNumber());
-//            ps.executeUpdate();
-//            addNote(account.getAccountNumber(), account.getAdmin(), account.getHoldReason());
-//            return true;
-//        } catch (SQLException e) {
-//            printStackTrace("Account hold error", e);
-//        }
-//
-//        return false;
-//    }
-
-//    public static boolean accountClose(Account account) {
-//        String sql = "UPDATE accounts SET account_close=? WHERE account_no=?";
-//
-//        try {
-//            setConnection();
-//            PreparedStatement ps = connection.prepareStatement(sql);
-//            ps.setBoolean(1, account.isClosed());
-//            ps.setString(2, account.getAccountNumber());
-//            ps.executeUpdate();
-//            addNote(account.getAccountNumber(), account.getAdmin(), account.getCloseReason());
-//            return true;
-//        } catch (SQLException e) {
-//            printStackTrace("Account hold error", e);
-//        }
-//
-//        return false;
-//    }
-
-//    public static boolean cardManager(Card card) {
-//        String sqlAcc = "SELECT card_linked_account, account_no, customer_name, customer_surname, account_type FROM cards " +
-//                "INNER JOIN accounts ON account_no=card_linked_account " +
-//                "WHERE card_no=?";
-//
-//        try {
-//            setConnection();
-//            PreparedStatement ps = connection.prepareStatement(sqlAcc);
-//            ps.setString(1, card.getCardNumber());
-//            ResultSet rs = ps.executeQuery();
-//            while (rs.next()) {
-//                User user = new User(rs.getString("customer_name"), rs.getString("customer_surname"), rs.getString("account_type"));
-//                user.getAccount().setAccountNumber(rs.getString("account_no"));
-//
-//                if(card.isIssue()) {
-//                    cardControl(card);
-//                    issueCard(user, card.getAdmin());
-//                } else if (card.isFRAUD()) {
-//                    cardControl(card);
-//                    List<Card> cards = getLinkedCards(user.getAccount().getAccountNumber());
-//                    Card latest = cards.get(cards.size() - 1);
-//                    if(card.getCardNumber().equals(latest.getCardNumber())) {
-//                        issueCard(user, card.getAdmin());
-//                    }
-//                } else {
-//                    cardControl(card);
-//                }
-//            }
-//            return true;
-//        } catch (SQLException e) {
-//            printStackTrace("Card control error", e);
-//        }
-//        return false;
-//    }
-
-//    private static void cardControl(Card card) throws SQLException {
-//        String sql = "UPDATE cards SET card_hold = ?, card_fraud = ? WHERE card_no = ?;";
-//        setConnection();
-//        PreparedStatement ps = connection.prepareStatement(sql);
-//        ps.setBoolean(1, card.isSTOP());
-//        ps.setBoolean(2, card.isFRAUD());
-//        ps.setString(3, card.getCardNumber());
-//        ps.executeUpdate();
-//        addNote(card.getCardNumber(), card.getAdmin(), card.getStopReason());
 //    }
 
     private static void setConnection() throws SQLException{

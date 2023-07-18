@@ -64,6 +64,17 @@ public class DatabaseTest {
     }
 
     @Test
+    void testCardReIssue() throws SQLException {
+        DatabaseManager.issueCard(jane, "Admin");
+        assertEquals(1, DatabaseManager.getLinkedCards(jane.getAccount().getAccountNumber()).size());
+        jane.getLastCardIssued().setSTOP(true, "Lost");
+        assertTrue(jane.getLastCardIssued().isSTOPPED());
+        assertTrue(DatabaseManager.cardControl(jane.getLastCardIssued(), "Lost"));
+        assertTrue(DatabaseManager.issueCard(jane, "Admin"));
+        assertEquals(2, DatabaseManager.getLinkedCards(jane.getAccount().getAccountNumber()).size());
+    }
+
+    @Test
     void getLinkedCardsWithNotes() throws SQLException {
         List<Map<String, Object>> johnRemarks = DatabaseManager.getLinkedCards(john.getAccount().getAccountNumber());
         List<Map<String, Object>> janeRemarks = DatabaseManager.getLinkedCards(john.getAccount().getAccountNumber());
@@ -99,6 +110,6 @@ public class DatabaseTest {
         DatabaseManager.closeConnection();
 
         File file = new File("finance.db");
-//        file.delete();
+        file.delete();
     }
 }
