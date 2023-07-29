@@ -1,5 +1,6 @@
 package za.co.tyaphile.card;
 
+
 import za.co.tyaphile.account.Account;
 import za.co.tyaphile.user.User;
 
@@ -9,32 +10,37 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-public class Card extends CardGenerator{
-    private final String cardNum;
-    private String stopReason;
+public class Card {
+    private int bin_number = 519629;
+    private String cardNum, stopReason;
+
     private boolean STOP, FRAUD;
-    private final List<String> notes = new ArrayList<>();
-    private final User user;
+    private List<String> notes = new ArrayList<>();
+
+    private final CardGenerator cg = new CardGenerator();
+    private User user;
     private final Account account;
 
     public Card(User user, Account account) {
         this.user = user;
         this.account = account;
-        cardNum = super.getCard();
+        cardNum = cg.getCard();
     }
 
     public String getCardNumber() {
-        return 519629 + cardNum;
+        String combine = bin_number + cardNum;
+        Double num = Double.parseDouble(combine);
+        return String.valueOf(num);
     }
 
     public String getCVV() {
         DecimalFormat df = new DecimalFormat("000");
-        return df.format(super.getCvv());
+        return df.format(cg.getCvv());
     }
 
     public String getCardPin() {
         DecimalFormat df = new DecimalFormat("0000");
-        return df.format(super.getPin());
+        return df.format(cg.getPin());
     }
 
     public String getStopReason() {
@@ -74,10 +80,6 @@ public class Card extends CardGenerator{
             if (FRAUD) setSTOP(true, reason);
             this.FRAUD = FRAUD;
         }
-    }
-
-    public User getUser() {
-        return user;
     }
 
     public List<String> getNotes() {
