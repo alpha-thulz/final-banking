@@ -30,7 +30,7 @@ public class BankServer implements Executor {
     }
 
     BankServer() {
-        setLookAndFeel();
+//        setLookAndFeel();
         init();
 //        execute(transactionSimulator());
         runServer();
@@ -38,11 +38,11 @@ public class BankServer implements Executor {
 
     private void runServer() {
         System.out.println("Starting server...");
-        System.out.println("Server started...");
         System.out.println("Setting up server...");
         try {
             ServerSocket ss = new ServerSocket(port);
             listen = true;
+            System.out.println("Server started...");
             System.out.println("Server ready and listening for connections...");
             while (listen) {
                 execute(new ListenSession(ss.accept()));

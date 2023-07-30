@@ -21,14 +21,6 @@ public class DatabaseTest {
     private static DatabaseManager dbm = new DatabaseManager();
     private static User john, jane;
 
-//    @Test
-//    void testOpenAccount() throws SQLException {
-//        assertTrue(DatabaseManager.openAccount(john, "Admin"));
-//        assertTrue(DatabaseManager.openAccount(jane, "Admin"));
-//        assertTrue(DatabaseManager.issueCard(john, "Admin"));
-//        assertTrue(DatabaseManager.issueCard(jane, "Admin"));
-//    }
-
     @Test
     void testGetAccounts() {
         List<Map<String, Object>> accounts = DatabaseManager.getAccounts();
