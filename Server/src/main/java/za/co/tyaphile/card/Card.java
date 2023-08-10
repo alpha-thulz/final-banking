@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-public class Card {
+public class Card extends CardGenerator {
     private int bin_number = 519629;
     private String cardNum, stopReason;
 
@@ -19,18 +19,16 @@ public class Card {
 
     private final CardGenerator cg = new CardGenerator();
     private User user;
-    private final Account account;
+    private final String account;
 
-    public Card(User user, Account account) {
-        this.user = user;
+    public Card(String account) {
         this.account = account;
-        cardNum = cg.getCard();
+//        super.generateCard();
     }
 
     public String getCardNumber() {
-        String combine = bin_number + cardNum;
-        Double num = Double.parseDouble(combine);
-        return String.valueOf(num);
+        String combine = bin_number + super.getCard();
+        return String.valueOf(Double.parseDouble(combine));
     }
 
     public String getCVV() {
@@ -47,7 +45,7 @@ public class Card {
         return stopReason;
     }
 
-    public String formatCardNumber(String number) {
+    public static String formatCardNumber(String number) {
         DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance();
         symbols.setGroupingSeparator(' ');
         DecimalFormat df = new DecimalFormat("####,####",symbols);
@@ -56,7 +54,7 @@ public class Card {
     }
 
     public String getLinkedAccount() {
-        return account.getAccountNumber();
+        return account;
     }
 
     public boolean isSTOPPED() {

@@ -6,12 +6,10 @@ import za.co.tyaphile.account.Account;
 import za.co.tyaphile.card.Card;
 import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.info.Info;
-import za.co.tyaphile.user.User;
 
 import java.sql.*;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,7 +19,6 @@ import java.util.regex.Pattern;
 
 public class DatabaseManager {
     private static Connection connection;
-    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     public static void createTables() {
         String[] tables = {accountsTable, cardsTable, transactsTable, notesTable};
@@ -45,26 +42,27 @@ public class DatabaseManager {
         }
     }
 
-    public static boolean openAccount(User user, String admin) {
-        String sql;
+    public static boolean openAccount(Map<String, Object> request) {
+        String sql, account = request.get("account").toString(), admin = request.get("admin").toString();
+        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
 
-        if(!user.getAccount().isOnHold()) {
+        if(!isOnHold) {
             sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type) VALUES (?, ?, ?, ?);";
         } else {
             sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type, account_hold) VALUES (?, ?, ?, ?, ?);";
-            user.getAccount().setOnHold(user.getAccount().isOnHold(), user.getAccount().getNotes().get(0));
+            addNote(account, admin, request.get("note").toString());
         }
         PreparedStatement ps = null;
         try {
             setConnection();
             ps = connection.prepareStatement(sql);
-            ps.setLong(1, Long.parseLong(user.getAccount().getAccountNumber()));
-            ps.setString(2, user.getAccount().getName());
-            ps.setString(3, user.getAccount().getSurname());
-            ps.setString(4, user.getAccount().getAccountType());
+            ps.setLong(1, Long.parseLong(account));
+            ps.setString(2, request.get("name").toString());
+            ps.setString(3, request.get("surname").toString());
+            ps.setString(4, request.get("type").toString());
 
-            if(user.getAccount().isOnHold()) {
-                ps.setBoolean(5, user.getAccount().isOnHold());
+            if(isOnHold) {
+                ps.setBoolean(5, true);
             }
 
             ps.executeUpdate();
@@ -79,6 +77,8 @@ public class DatabaseManager {
                 printStackTrace("Closing connections error", e);
             }
         }
+        addNote(account, admin, "New account opened");
+        issueCard(request);
         return true;
     }
 
@@ -116,19 +116,28 @@ public class DatabaseManager {
         return accounts;
     }
 
-    public static List<Map<String, Object>> getAccounts(String search) {
+    public static List<Map<String, Object>> getAccounts(String account, String name, String surname, String card, boolean match) {
         List<Map<String, Object>> accounts = new ArrayList<>();
-        String sql = "SELECT * FROM accounts " +
-                "INNER JOIN cards ON account_no=card_linked_account " +
-                "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) " +
-                "GROUP BY account_no;";
+
+        String sql;
+        if (match) {
+            sql = "SELECT * FROM accounts " +
+                    "INNER JOIN cards ON account_no=card_linked_account " +
+                    "WHERE (account_no=? AND customer_name=? AND customer_surname=?) OR card_no=?" +
+                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
+        } else {
+            sql = "SELECT * FROM accounts " +
+                    "INNER JOIN cards ON account_no=card_linked_account " +
+                    "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) " +
+                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
+        }
         PreparedStatement ps = null;
         ResultSet rs = null;
         try {
             setConnection();
             ps = connection.prepareStatement(sql);
 
-            String val = search.replaceAll("\\D+", "");
+            String val = account.replaceAll("\\D+", "");
             Pattern pattern = Pattern.compile("\\d+");
             Matcher matcher = pattern.matcher(val);
             if(matcher.matches()) {
@@ -137,19 +146,29 @@ public class DatabaseManager {
                 ps.setLong(1, -1);
             }
 
-            ps.setString(2, search);
-            ps.setString(3, search);
-            ps.setString(4, getFormatCardNumber(search));
+            ps.setString(2, name);
+            ps.setString(3, surname);
+            ps.setString(4, getFormatCardNumber(card));
 
             rs = ps.executeQuery();
 
             while (rs.next()) {
                 Map<String, Object> acc = new HashMap<>();
+                acc.put("account_number", rs.getString("account_no"));
                 acc.put("name", rs.getString("customer_name"));
                 acc.put("surname", rs.getString("customer_surname"));
-                acc.put("account_number", rs.getString("account_no"));
                 acc.put("type", rs.getString("account_type"));
+                acc.put("on_hold", rs.getBoolean("account_hold"));
+                acc.put("on_close", rs.getBoolean("account_close"));
                 acc.put("balance", rs.getDouble("balance"));
+                acc.put("overdraft_balance", rs.getDouble("overdraft_balance"));
+                acc.put("overdraft_limit", rs.getDouble("overdraft_limit"));
+                acc.put("open_date", rs.getTimestamp("account_open_date"));
+                acc.put("card", rs.getString("card_no"));
+                acc.put("card_hold", rs.getBoolean("card_hold"));
+                acc.put("card_fraud", rs.getBoolean("card_fraud"));
+                acc.put("issue_date", rs.getTimestamp("card_issue_date"));
+                acc.put("notes", getNotes(rs.getString("account_no")));
                 accounts.add(acc);
             }
         } catch (SQLException e) {
@@ -167,78 +186,128 @@ public class DatabaseManager {
         return accounts;
     }
 
-    public static boolean setBalance(long from, long to, String desc, String type, double amount) {
-        String sql = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
-        String sqlTrans = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description, " +
-                "transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
-        PreparedStatement ps = null;
+    public static boolean updateLimit(String account, double amount) {
+        String sql;
+        PreparedStatement ps = null;;
+        boolean update = false;
         try {
             setConnection();
-            connection.setAutoCommit(false);
-
-            ps = connection.prepareStatement(sqlTrans);
-            ps.setLong(1, from);
-            ps.setLong(2, to);
-            ps.setString(3, desc);
-            ps.setString(4, type);
-            ps.setDouble(5, amount);
-            ps.executeUpdate();
-
-            ps = connection.prepareStatement(sql);
-            ps.setDouble(1, amount);
-            ps.setLong(2, to);
-            ps.executeUpdate();
-
-            connection.commit();
-        } catch (SQLException e) {
-            printStackTrace("Balance check error", e);
-            try {
-                connection.rollback();
-            } catch (SQLException ex) {
-                printStackTrace("Error", ex);
+            if (amount > 0) {
+                sql = "UPDATE accounts SET overdraft_limit = ?, overdraft_balance = (CASE " +
+                        "WHEN overdraft_limit - ? <= overdraft_balance THEN overdraft_balance - ? " +
+                        "WHEN overdraft_balance IS NULL THEN ? " +
+                        "ELSE overdraft_balance END) " +
+                        "WHERE account_no = ?";
+                ps = connection.prepareStatement(sql);
+                ps.setDouble(1, amount);
+                ps.setDouble(2, amount);
+                ps.setDouble(3, amount);
+                ps.setDouble(4, amount);
+                ps.setString(5, account);
+            } else {
+                sql = "UPDATE accounts SET overdraft_balance = overdraft_balance - overdraft_limit, overdraft_limit = ? WHERE account_no = ?";
+                ps = connection.prepareStatement(sql);
+                ps.setDouble(1, amount);
+                ps.setString(2, account);
             }
-            return false;
+            update =  ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            printStackTrace("Update limit failure", e);
         } finally {
             try {
                 connection.close();
                 if (ps != null) ps.close();
             } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
+                printStackTrace("Unable to close connection", e);
             }
         }
+        return update;
+    }
+
+    private static Map<String, Double> getBalance(String account) throws SQLException {
+        Map<String, Double> balance = new HashMap<>();
+        String sql = "SELECT balance, overdraft_balance, overdraft_limit FROM accounts WHERE account_no = ?";
+
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, account);
+        ResultSet rs = ps.executeQuery();
+
+        while (rs.next()) {
+            balance.put("balance", rs.getDouble("balance"));
+            balance.put("overdraft", rs.getDouble("overdraft_balance"));
+            balance.put("overdraft_limit", rs.getDouble("overdraft_limit"));
+        }
+
+        return balance;
+    }
+
+    private static boolean setBalance(long account, double amount) throws SQLException {
+        String sql = "UPDATE accounts SET balance = balance + ?, " +
+                "overdraft_balance = overdraft_balance + ? WHERE account_no = ?";
+
+        PreparedStatement ps = connection.prepareStatement(sql);
+
+        Map<String, Double> balances = getBalance(String.valueOf(account));
+        double balance = balances.get("balance");
+        double overdraft = balances.get("overdraft");
+        double overdraft_limit = balances.get("overdraft_limit");
+
+        double difference = 0;
+
+        if (amount > 0) {
+            if (overdraft < overdraft_limit) {
+                difference = overdraft_limit - overdraft;
+            }
+            ps.setDouble(1, amount - difference);
+            ps.setDouble(2, difference);
+            ps.setLong(3, account);
+        } else {
+            if (Math.abs(amount) > balance) {
+                difference = amount - balance;
+            }
+            ps.setDouble(1, amount - difference);
+            ps.setDouble(2, difference);
+            ps.setLong(3, account);
+        }
+        ps.executeUpdate();
         return true;
     }
 
-    public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount) {
+    public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount, boolean fromAccount) {
+        boolean successful = false;
+
         String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
                 " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
-        String sqlUpdatePayer = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
-        String sqlUpdateRecipient = "UPDATE accounts SET balance = balance + ? WHERE account_no = ?";
 
         PreparedStatement ps = null;
         try {
             setConnection();
             connection.setAutoCommit(false);
-            ps = connection.prepareStatement(sql);
+            if (fromAccount) {
+                if (setBalance(from, -amount) && setBalance(to, amount)) {
+                    ps = connection.prepareStatement(sql);
 
-            ps.setLong(1, from);
-            ps.setLong(2, to);
-            ps.setString(3, desc);
-            ps.setString(4, type);
-            ps.setDouble(5, amount);
-            ps.executeUpdate();
+                    ps.setLong(1, from);
+                    ps.setLong(2, to);
+                    ps.setString(3, desc);
+                    ps.setString(4, type);
+                    ps.setDouble(5, amount);
+                    ps.executeUpdate();
+                }
+            } else {
+                if (setBalance(to, amount)) {
+                    ps = connection.prepareStatement(sql);
 
-            ps = connection.prepareStatement(sqlUpdatePayer);
-            ps.setDouble(1, -amount);
-            ps.setLong(2, from);
-            ps.executeUpdate();
-
-            ps = connection.prepareStatement(sqlUpdateRecipient);
-            ps.setDouble(1, amount);
-            ps.setLong(2, to);
-            ps.executeUpdate();
-
+                    ps.setLong(1, from);
+                    ps.setLong(2, to);
+                    ps.setString(3, desc);
+                    ps.setString(4, type);
+                    ps.setDouble(5, amount);
+                    ps.executeUpdate();
+                }
+            }
             connection.commit();
+            successful = true;
         } catch (SQLException e) {
             printStackTrace("Deposit error", e);
             try {
@@ -246,7 +315,6 @@ public class DatabaseManager {
             } catch (SQLException ex) {
                 printStackTrace("Rollback error", ex);
             }
-            return false;
         } finally {
             try {
                 connection.close();
@@ -255,25 +323,31 @@ public class DatabaseManager {
                 printStackTrace("Closing connections error", e);
             }
         }
-        return true;
+        return successful;
     }
 
-    public static boolean issueCard(User user, String admin) {
-        if(user.getAccount().isOnHold() || (!user.getAllCards().isEmpty() && !user.getLastCardIssued().isSTOPPED())) {
+    public static boolean issueCard(Map<String, Object> request) {
+        String account = request.get("account").toString(), admin = request.get("admin").toString();
+        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
+
+        boolean isCardHold = getCurrentCard(account).values().stream()
+                .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
+
+        if(isOnHold || !isCardHold && !getCurrentCard(account).isEmpty()) {
             return false;
         }
-
+        Card card;
         PreparedStatement ps = null;
         String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
-        if (addNote(user.getAccount().getAccountNumber(), admin, "Issued new card")) {
+        if (addNote(account, admin, "Issued new card")) {
             try {
                 setConnection();
-                user.issueCard();
+                card = new Card(account);
                 ps = connection.prepareStatement(sql);
-                ps.setString(1, user.getLastCardIssued().formatCardNumber(user.getLastCardIssued().getCardNumber()));
-                ps.setString(2, user.getLastCardIssued().getCardPin());
-                ps.setString(3, user.getLastCardIssued().getCVV());
-                ps.setLong(4, Long.parseLong(user.getAccount().getAccountNumber()));
+                ps.setString(1, Card.formatCardNumber(card.getCardNumber()));
+                ps.setString(2, card.getCardPin());
+                ps.setString(3, card.getCVV());
+                ps.setLong(4, Long.parseLong(account));
                 ps.executeUpdate();
             } catch (SQLException e) {
                 printStackTrace("Card issue error", e);
@@ -286,8 +360,46 @@ public class DatabaseManager {
                     printStackTrace("Closing connections error", e);
                 }
             }
+            addNote(Card.formatCardNumber(card.getCardNumber()), admin, account + " linked with card " + Card.formatCardNumber(card.getCardNumber()));
         }
         return true;
+    }
+
+    public static Map<String, Map<String, Object>> getCurrentCard(String param) {
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=? " +
+                "ORDER BY card_id DESC LIMIT 1;";
+        Map<String, Map<String, Object>> card = new HashMap<>();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ps.setString(1, param);
+            rs = ps.executeQuery();
+            while (rs.next()) {
+                String cardNumber = rs.getString("card_no");
+                Map<String, Object> cardDetails = new HashMap<>();
+                cardDetails.put("card", cardNumber);
+                cardDetails.put("card_pin", rs.getString("card_pin"));
+                cardDetails.put("card_cvv", rs.getString("card_cvv"));
+
+                cardDetails.put("card_fraud", rs.getBoolean("card_fraud"));
+                cardDetails.put("card_hold", rs.getBoolean("card_hold"));
+                cardDetails.put("remarks", getNotes(cardNumber));
+                card.put(param, cardDetails);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Getting cards error", e);
+        }  finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+                if (rs != null) rs.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        return card;
     }
 
     public static List<Map<String, Object>> getLinkedCards(String param) {
@@ -358,13 +470,13 @@ public class DatabaseManager {
         ps.setString(1, param);
         ResultSet rs = ps.executeQuery();
         while (rs.next()) {
-            notes.add("{ " + rs.getString("added_by") + " } " + rs.getString("notes"));
+            notes.add("{" + rs.getString("added_by") + "} " + rs.getString("notes"));
         }
         return notes;
     }
 
     public static List<Map<String, Object>> getTransactions(long accFrom, long accTo, Timestamp fromDate) {
-        String sql = getSql(accFrom, accTo);
+        String sql = getTransactionsSql(accFrom, accTo);
 
         List<Map<String, Object>> transactions = new ArrayList<>();
         PreparedStatement ps = null;
@@ -424,7 +536,7 @@ public class DatabaseManager {
         return transactions;
     }
 
-    private static String getSql(long accFrom, long accTo) {
+    private static String getTransactionsSql(long accFrom, long accTo) {
         String sql;
 
         if (accFrom == 0 && accTo == 0) {
@@ -451,16 +563,21 @@ public class DatabaseManager {
         return sql;
     }
 
-    public static boolean accountHold(Account account, String admin) {
+    public static boolean accountHold(Map<String, Object> request) {
         String sql = "UPDATE accounts SET account_close=?, account_hold=?  WHERE account_no=?";
         PreparedStatement ps = null;
+        boolean isHold = (Boolean) request.get("hold");
+        boolean isClose = (Boolean) request.get("close");
+        String account = request.get("account").toString(), admin = request.get("admin").toString();
+        String note = request.get("note").toString();
+
         try {
             setConnection();
             ps = connection.prepareStatement(sql);
-            ps.setBoolean(1, account.isClosed());
-            ps.setBoolean(2, account.isOnHold());
-            ps.setString(3, account.getAccountNumber());
-            if (addNote(account.getAccountNumber(), admin, account.getCloseReason())) {
+            ps.setBoolean(1, isClose);
+            ps.setBoolean(2, isHold);
+            ps.setString(3, account);
+            if (addNote(account, admin, note)) {
                 ps.executeUpdate();
                 return true;
             }
@@ -478,16 +595,17 @@ public class DatabaseManager {
         return false;
     }
 
-    public static boolean cardControl(Card card, String admin) {
+    public static boolean cardControl(String card, String admin, String note, boolean isHold, boolean isStop) {
         PreparedStatement ps = null;
-        if (addNote(card.getCardNumber(), admin, card.getStopReason())) {
+
+        if (addNote(card, admin, note)) {
             try {
                 String sql = "UPDATE cards SET card_hold = ?, card_fraud = ? WHERE card_no = ?;";
                 setConnection();
                 ps = connection.prepareStatement(sql);
-                ps.setBoolean(1, card.isSTOPPED());
-                ps.setBoolean(2, card.isFRAUD());
-                ps.setString(3, card.formatCardNumber(card.getCardNumber()));
+                ps.setBoolean(1, isHold);
+                ps.setBoolean(2, isStop);
+                ps.setString(3, card);
 
                 ps.executeUpdate();
             } catch (SQLException e) {
@@ -540,9 +658,9 @@ public class DatabaseManager {
         return df.format(num);
     }
 
-    public DatabaseManager() {
+    public static void initTables() {
         if(BankServer.isMySQL()) {
-            System.out.println("MySQL");
+//            System.out.println("MySQL");
             accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
                     "\taccount_id BIGINT AUTO_INCREMENT PRIMARY KEY, \n" +
                     "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
@@ -552,9 +670,9 @@ public class DatabaseManager {
                     "\taccount_hold TINYINT(1) DEFAULT 0, \n" +
                     "\taccount_close TINYINT(1) DEFAULT 0, \n" +
                     "\tbalance DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "    overdraft_balance DECIMAL(13, 2) DEFAULT 0.00, \n" +
+                    "    overdraft_balance DECIMAL(13, 2), \n" +
                     "    overdraft_limit DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "\taccount_open_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    "\taccount_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
                     ");";
 
             cardsTable = "CREATE TABLE IF NOT EXISTS cards (\n" +
@@ -565,7 +683,7 @@ public class DatabaseManager {
                     "    card_cvv VARCHAR(3) NOT Null, \n" +
                     "    card_hold TINYINT(1) DEFAULT 0, \n" +
                     "    card_fraud TINYINT(1) DEFAULT 0, " +
-                    "    card_issue_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n" +
+                    "    card_issue_date TIMESTAMP DEFAULT (datetime('now','localtime'))\n" +
                     ");";
 
             transactsTable = "CREATE TABLE IF NOT EXISTS transact (\n" +
@@ -573,20 +691,20 @@ public class DatabaseManager {
                     "    transact_account BIGINT NOT NULL, \n" +
                     "    transact_beneficiary BIGINT NOT NULL,\n" +
                     "    transact_description VARCHAR(100) NOT NULL,\n" +
-                    "    transact_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
+                    "    transact_date TIMESTAMP DEFAULT (datetime('now','localtime')),\n" +
                     "    transact_type VARCHAR(20) NOT NULL,\n" +
                     "    transaction_amount DOUBLE NOT NULL" +
                     ");";
 
             notesTable = "CREATE TABLE IF NOT EXISTS notes (\n" +
                     "\tnotes_id BIGINT AUTO_INCREMENT PRIMARY KEY,\n" +
-                    "    notes_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \n" +
+                    "    notes_date TIMESTAMP DEFAULT (datetime('now','localtime')), \n" +
                     "    notes_link_to VARCHAR(70) NOT NULL, \n" +
                     "    added_by VARCHAR(70) NOT NULL, \n" +
                     "    notes BLOB NOT NULL\n" +
                     ");";
         } else {
-            System.out.println("SQLite");
+//            System.out.println("SQLite");
             accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
                     "\taccount_id INTEGER PRIMARY KEY, \n" +
                     "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
@@ -596,9 +714,9 @@ public class DatabaseManager {
                     "\taccount_hold TINYINT(1) DEFAULT 0, \n" +
                     "\taccount_close TINYINT(1) DEFAULT 0, \n" +
                     "\tbalance DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "    overdraft_balance DECIMAL(13, 2) DEFAULT 0.00, \n" +
+                    "    overdraft_balance DECIMAL(13, 2), \n" +
                     "    overdraft_limit DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "\taccount_open_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    "\taccount_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
                     ");";
 
             cardsTable = "CREATE TABLE IF NOT EXISTS cards (\n" +
@@ -609,7 +727,7 @@ public class DatabaseManager {
                     "    card_cvv VARCHAR(3) NOT Null, \n" +
                     "    card_hold TINYINT(1) DEFAULT 0, \n" +
                     "    card_fraud TINYINT(1) DEFAULT 0, " +
-                    "    card_issue_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n" +
+                    "    card_issue_date TIMESTAMP DEFAULT (datetime('now','localtime'))\n" +
                     ");";
 
             transactsTable = "CREATE TABLE IF NOT EXISTS transact (\n" +
@@ -617,14 +735,14 @@ public class DatabaseManager {
                     "    transact_account BIGINT NOT NULL, \n" +
                     "    transact_beneficiary BIGINT NOT NULL,\n" +
                     "    transact_description VARCHAR(100) NOT NULL,\n" +
-                    "    transact_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
+                    "    transact_date TIMESTAMP DEFAULT (datetime('now','localtime')),\n" +
                     "    transact_type VARCHAR(20) NOT NULL,\n" +
                     "    transaction_amount DOUBLE NOT NULL" +
                     ");";
 
             notesTable = "CREATE TABLE IF NOT EXISTS notes (\n" +
                     "\tnotes_id INTEGER PRIMARY KEY,\n" +
-                    "    notes_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \n" +
+                    "    notes_date TIMESTAMP DEFAULT (datetime('now','localtime')), \n" +
                     "    notes_link_to VARCHAR(70) NOT NULL, \n" +
                     "    added_by VARCHAR(70) NOT NULL, \n" +
                     "    notes BLOB NOT NULL\n" +

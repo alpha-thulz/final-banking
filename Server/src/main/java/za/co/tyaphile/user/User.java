@@ -21,11 +21,17 @@ public class User {
         transactions = new Transactions(this);
     }
 
+    public User(String name, String surname, String account_type, String accountNumber) {
+        account = new Account(name, surname, account_type);
+        account.setAccountNumber(accountNumber);
+        transactions = new Transactions(this);
+    }
+
     public void issueCard() {
-        if (cards.isEmpty() || card.isSTOPPED()) {
-            card = new Card(this, account);
-            cards.add(card);
-        }
+//        if (cards.isEmpty() || card.isSTOPPED()) {
+//            card = new Card(this, account);
+//            cards.add(card);
+//        }
     }
 
     public Account getAccount() {

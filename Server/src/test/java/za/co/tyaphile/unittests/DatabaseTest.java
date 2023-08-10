@@ -10,16 +10,17 @@ import java.io.File;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class DatabaseTest {
-    private static DatabaseManager dbm = new DatabaseManager();
-    private static User john, jane;
+
+    private static Map<String, Object> john = new HashMap<>();
+    private static Map<String, Object> jane = new HashMap<>();
 
     @Test
     void testGetAccounts() {
@@ -28,80 +29,98 @@ public class DatabaseTest {
     }
 
     @Test
-    void testSetBalance() {
-        long from = 1000000000;
-        long to = Long.parseLong(john.getAccount().getAccountNumber());
-        String description = "Account transfer";
-        String type = "payment";
-
-        assertTrue(DatabaseManager.setBalance(from , to, description, type, 5000));
-        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
-    }
-
-    @Test
     void testMakeTransaction() {
-        long from = Long.parseLong(john.getAccount().getAccountNumber());
-        long to = Long.parseLong(jane.getAccount().getAccountNumber());
+        long from = 100000000;
+        long to = Long.parseLong(jane.get("account").toString());
         String description = "Account transfer";
-        String type = "payment";
+        String type = "deposit";
 
-        assertTrue(DatabaseManager.makeTransaction(from , to, description, type, 5000));
+        assertTrue(DatabaseManager.makeTransaction(from , to, description, type, 5000, false));
         assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
+        long beneficiary = Long.parseLong(john.get("account").toString());
+        assertTrue(DatabaseManager.makeTransaction(to , beneficiary, description, type, 750, true));
+        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
+        assertEquals(2, DatabaseManager.getTransactions(0, to, Timestamp.from(Instant.MIN)).size());
     }
 
     @Test
-    void getLinkedCards() throws SQLException {
-        assertEquals(1, DatabaseManager.getLinkedCards(john.getAccount().getAccountNumber()).size());
-        assertEquals(1, DatabaseManager.getLinkedCards(jane.getAccount().getAccountNumber()).size());
+    void testLinkedCards() {
+        assertEquals(1, DatabaseManager.getLinkedCards(john.get("account").toString()).size());
     }
 
     @Test
-    void testCardReIssue() throws SQLException {
-        DatabaseManager.issueCard(jane, "Admin");
-        assertEquals(1, DatabaseManager.getLinkedCards(jane.getAccount().getAccountNumber()).size());
-        jane.getLastCardIssued().setSTOP(true, "Lost");
-        assertTrue(jane.getLastCardIssued().isSTOPPED());
-        assertTrue(DatabaseManager.cardControl(jane.getLastCardIssued(), "Lost"));
-        assertTrue(DatabaseManager.issueCard(jane, "Admin"));
-        assertEquals(2, DatabaseManager.getLinkedCards(jane.getAccount().getAccountNumber()).size());
+    void testCurrentCard() {
+        assertEquals(1, DatabaseManager.getCurrentCard(john.get("account").toString()).size());
+        assertEquals(1, DatabaseManager.getCurrentCard(jane.get("account").toString()).size());
+    }
+
+    @Test
+    void testCardReIssue()  {
+        assertEquals(1, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
+        Map<String, Object> currentCard = null;
+        for (int i = 0; i < 4; i++) {
+            currentCard = DatabaseManager.getCurrentCard(jane.get("account").toString()).get(jane.get("account").toString());
+            assertTrue(DatabaseManager.cardControl(currentCard.get("card").toString(), "Admin", "Lost card", true, false));
+            assertTrue(DatabaseManager.issueCard(jane));
+        }
+        assertEquals(5, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
+        Map<String, Object> newCard = DatabaseManager.getCurrentCard(jane.get("account").toString()).get(jane.get("account").toString());
+        assertNotEquals(currentCard.get("card").toString(), newCard.get("card").toString());
     }
 
     @Test
     void getLinkedCardsWithNotes() throws SQLException {
-        List<Map<String, Object>> johnRemarks = DatabaseManager.getLinkedCards(john.getAccount().getAccountNumber());
-        List<Map<String, Object>> janeRemarks = DatabaseManager.getLinkedCards(john.getAccount().getAccountNumber());
+        List<Map<String, Object>> johnRemarks = DatabaseManager.getLinkedCards(john.get("account").toString());
+        List<Map<String, Object>> janeRemarks = DatabaseManager.getLinkedCards(jane.get("account").toString());
 
-        assertEquals(10, ((List<?>) johnRemarks.get(0).get("remarks")).size());
-        assertEquals(10, ((List<?>) janeRemarks.get(0).get("remarks")).size());
+        assertEquals(1, ((List<?>) johnRemarks.get(0).get("remarks")).size());
+        assertEquals(1, ((List<?>) janeRemarks.get(0).get("remarks")).size());
+    }
+
+    @Test
+    void testAccountSearch() {
+        List<Map<String, Object>> result = DatabaseManager.getAccounts(john.get("account").toString(),
+                john.get("name").toString(), john.get("surname").toString(), "", true);
+
+        assertEquals(1, result.size());
+        assertEquals(john.get("account").toString(), result.get(0).get("account_number"));
+        assertEquals("John", result.get(0).get("name"));
+        assertEquals("Doe", result.get(0).get("surname"));
+        assertEquals((double) 0, result.get(0).get("balance"));
+        assertEquals(16, result.get(0).get("card").toString().replaceAll("\\s+", "").length());
     }
 
     @BeforeAll
-    static void setDatabase() throws SQLException {
-        john = new User("John", "Doe", "Savings");
-        jane = new User("Jane", "Doe", "Savings");
+    static void setDatabase() {
+        john.put("account", "510000000");
+        john.put("admin", "Admin");
+        john.put("name", "John");
+        john.put("surname", "Doe");
+        john.put("type", "Savings");
+
+        jane.put("account", "510000001");
+        jane.put("admin", "Admin");
+        jane.put("name", "Jane");
+        jane.put("surname", "Doe");
+        jane.put("type", "Savings");
 
         File file = new File("finance.db");
         file.delete();
 
+        DatabaseManager.initTables();
         DatabaseManager.createTables();
 
-        DatabaseManager.openAccount(john, "Admin");
-        DatabaseManager.openAccount(jane, "Admin");
-        DatabaseManager.issueCard(john, "Admin");
-        DatabaseManager.issueCard(jane, "Admin");
-
-        for (int i = 1; i < 11; i++) {
-            DatabaseManager.addNote(john.getLastCardIssued().formatCardNumber(john.getLastCardIssued().getCardNumber()), "Admin", "John note " + i);
-            DatabaseManager.addNote(jane.getLastCardIssued().formatCardNumber(jane.getLastCardIssued().getCardNumber()), "Admin", "Jane note " + i);
-        }
+        DatabaseManager.openAccount(john);
+        DatabaseManager.openAccount(jane);
+        DatabaseManager.issueCard(john);
+        DatabaseManager.issueCard(jane);
     }
 
     @AfterAll
     static void cleanUpDatabase() {
-        dbm = null;
         DatabaseManager.closeConnection();
 
-        File file = new File("finance.db");
-        file.delete();
+//        File file = new File("finance.db");
+//        file.delete();
     }
 }
