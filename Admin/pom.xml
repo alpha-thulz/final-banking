@@ -7,11 +7,18 @@
         <artifactId>final-banking</artifactId>
         <version>1.0.0</version>
     </parent>
+
     <artifactId>Admin</artifactId>
     <version>1.0.0</version>
     <name>Admin</name>
+
     <url>http://maven.apache.org</url>
+
     <dependencies>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>

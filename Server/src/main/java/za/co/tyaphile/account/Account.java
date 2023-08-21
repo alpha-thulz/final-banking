@@ -106,14 +106,6 @@ public class Account extends AccountGenerate {
         return notes;
     }
 
-    public String getFormattedAccount() {
-        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance();
-        symbols.setGroupingSeparator('-');
-        DecimalFormat df = new DecimalFormat("0000,0000,000", symbols);
-        double account = Double.parseDouble(super.getAccountNumber());
-        return df.format(account);
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

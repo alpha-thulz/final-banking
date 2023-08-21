@@ -1,16 +1,12 @@
 package za.co.tyaphile.unittests;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import za.co.tyaphile.database.DatabaseManager;
-import za.co.tyaphile.user.User;
 
 import java.io.File;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,75 +19,128 @@ public class DatabaseTest {
     private static Map<String, Object> jane = new HashMap<>();
 
     @Test
-    void testGetAccounts() {
+    void testUpdateLimits() throws SQLException {
+        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 100));
+
+        Map<String, Double> balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
+
+        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 200));
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
+
+        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 100));
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
+    }
+
+    @Test
+    void testCurrentCard() {
+        assertInstanceOf(Map.class, DatabaseManager.getCurrentCard(jane.get("account").toString()));
+        Map<String, Map<String, Object>> result = DatabaseManager.getCurrentCard(jane.get("account").toString());
+        assertEquals(1, result.size());
+        for(Map.Entry<String, Map<String, Object>> entry:result.entrySet()) {
+            assertEquals(jane.get("account").toString(), entry.getKey());
+            assertEquals(9, entry.getKey().length());
+        }
+    }
+
+    @Test
+    void testLinkedCards() {
+        assertInstanceOf(List.class, DatabaseManager.getLinkedCards(john.get("account").toString()));
+        List<Map<String, Object>> result = DatabaseManager.getLinkedCards(john.get("account").toString());
+        assertEquals(1, result.size());
+        Map<String, Object> cardInfo = result.get(0);
+        assertEquals(16, cardInfo.get("card_no").toString().replaceAll("\\s+", "").length());
+        assertEquals(4, cardInfo.get("card_pin").toString().length());
+        assertEquals(3, cardInfo.get("card_cvv").toString().length());
+        assertFalse((Boolean) cardInfo.get("card_fraud"));
+        assertFalse((Boolean) cardInfo.get("card_hold"));
+        assertInstanceOf(List.class, cardInfo.get("remarks"));
+        assertEquals(1, ((List<?>) cardInfo.get("remarks")).size());
+    }
+
+    @Test
+    void testGetAllAccounts() {
         List<Map<String, Object>> accounts = DatabaseManager.getAccounts();
         assertEquals(2, accounts.size());
     }
 
     @Test
-    void testMakeTransaction() {
-        long from = 100000000;
-        long to = Long.parseLong(jane.get("account").toString());
-        String description = "Account transfer";
-        String type = "deposit";
-
-        assertTrue(DatabaseManager.makeTransaction(from , to, description, type, 5000, false));
-        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
-        long beneficiary = Long.parseLong(john.get("account").toString());
-        assertTrue(DatabaseManager.makeTransaction(to , beneficiary, description, type, 750, true));
-        assertEquals(1, DatabaseManager.getTransactions(from, to, Timestamp.from(Instant.MIN)).size());
-        assertEquals(2, DatabaseManager.getTransactions(0, to, Timestamp.from(Instant.MIN)).size());
-    }
-
-    @Test
-    void testLinkedCards() {
-        assertEquals(1, DatabaseManager.getLinkedCards(john.get("account").toString()).size());
-    }
-
-    @Test
-    void testCurrentCard() {
-        assertEquals(1, DatabaseManager.getCurrentCard(john.get("account").toString()).size());
-        assertEquals(1, DatabaseManager.getCurrentCard(jane.get("account").toString()).size());
-    }
-
-    @Test
-    void testCardReIssue()  {
-        assertEquals(1, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
-        Map<String, Object> currentCard = null;
-        for (int i = 0; i < 4; i++) {
-            currentCard = DatabaseManager.getCurrentCard(jane.get("account").toString()).get(jane.get("account").toString());
-            assertTrue(DatabaseManager.cardControl(currentCard.get("card").toString(), "Admin", "Lost card", true, false));
-            assertTrue(DatabaseManager.issueCard(jane));
-        }
-        assertEquals(5, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
-        Map<String, Object> newCard = DatabaseManager.getCurrentCard(jane.get("account").toString()).get(jane.get("account").toString());
-        assertNotEquals(currentCard.get("card").toString(), newCard.get("card").toString());
-    }
-
-    @Test
-    void getLinkedCardsWithNotes() throws SQLException {
-        List<Map<String, Object>> johnRemarks = DatabaseManager.getLinkedCards(john.get("account").toString());
-        List<Map<String, Object>> janeRemarks = DatabaseManager.getLinkedCards(jane.get("account").toString());
-
-        assertEquals(1, ((List<?>) johnRemarks.get(0).get("remarks")).size());
-        assertEquals(1, ((List<?>) janeRemarks.get(0).get("remarks")).size());
-    }
-
-    @Test
-    void testAccountSearch() {
+    void testGetSpecificAccount() {
         List<Map<String, Object>> result = DatabaseManager.getAccounts(john.get("account").toString(),
                 john.get("name").toString(), john.get("surname").toString(), "", true);
 
         assertEquals(1, result.size());
-        assertEquals(john.get("account").toString(), result.get(0).get("account_number"));
+        assertEquals("00-510-000-000", result.get(0).get("account_number"));
         assertEquals("John", result.get(0).get("name"));
         assertEquals("Doe", result.get(0).get("surname"));
         assertEquals((double) 0, result.get(0).get("balance"));
         assertEquals(16, result.get(0).get("card").toString().replaceAll("\\s+", "").length());
     }
 
-    @BeforeAll
-    static void setDatabase() {
+    @Test
+    void testMakePaymentInsufficientFunds() {
+        long accountFrom = Integer.parseInt(john.get("account").toString());
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+        String description = "Capital";
+        String type = "EFT";
+        double amount = 50_000;
+        boolean fromAccount = true;
+
+        assertFalse(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, amount, fromAccount));
+    }
+
+    @Test
+    void testMakePaymentFunds() throws SQLException {
+        long accountFrom = Integer.parseInt(john.get("account").toString());
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+        String description = "Capital";
+        String type = "EFT";
+
+        assertFalse(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 1000, true));
+        Map<String, Double> balances = DatabaseManager.getBalance(john.get("account").toString());
+
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(0), DatabaseManager.getBalance(jane.get("account").toString()).get("balance"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft_limit"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft"));
+
+        assertTrue(DatabaseManager.makeTransaction(100000000, accountFrom, description, type, 1000, false));
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(1000), balances.get("balance"));
+        assertEquals(Double.valueOf(0), DatabaseManager.getBalance(jane.get("account").toString()).get("balance"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft_limit"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft"));
+
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 350, true));
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(650), balances.get("balance"));
+        assertEquals(Double.valueOf(350), DatabaseManager.getBalance(jane.get("account").toString()).get("balance"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft_limit"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft"));
+    }
+
+    @Test
+    void testDepositCash() {
+        long accountFrom = 100000000;
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+        String description = "Capital";
+        String type = "EFT";
+        double amount = 25_000;
+        boolean fromAccount = false;
+
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, amount, fromAccount));
+    }
+
+    @BeforeEach
+    void setDatabase() {
         john.put("account", "510000000");
         john.put("admin", "Admin");
         john.put("name", "John");
@@ -110,17 +159,15 @@ public class DatabaseTest {
         DatabaseManager.initTables();
         DatabaseManager.createTables();
 
-        DatabaseManager.openAccount(john);
-        DatabaseManager.openAccount(jane);
-        DatabaseManager.issueCard(john);
-        DatabaseManager.issueCard(jane);
+        assertTrue(DatabaseManager.openAccount(john));
+        assertTrue(DatabaseManager.openAccount(jane));
     }
 
-    @AfterAll
-    static void cleanUpDatabase() {
+    @AfterEach
+    void cleanUpDatabase() {
         DatabaseManager.closeConnection();
 
-//        File file = new File("finance.db");
-//        file.delete();
+        File file = new File("finance.db");
+        file.delete();
     }
 }

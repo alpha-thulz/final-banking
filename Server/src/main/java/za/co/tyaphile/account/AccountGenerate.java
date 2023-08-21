@@ -17,12 +17,7 @@ public class AccountGenerate {
         account = max + ((long) (r.nextDouble() * (max - min)));
     }
 
-    public void setAccountNumber(String accountNumber) {
-        account = Double.parseDouble(accountNumber);
-    }
-
     public String getAccountNumber() {
-
         return df.format(account);
     }
 }

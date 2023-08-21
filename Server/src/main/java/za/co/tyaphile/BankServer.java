@@ -28,9 +28,6 @@ public class BankServer implements Executor {
         execute(new Connector(port));
     }
 
-
-
-
     private void init() {
 //        new ThemeSetup();
         DatabaseManager.initTables();
@@ -41,23 +38,79 @@ public class BankServer implements Executor {
     }
 
     public static String processRequest(String input) {
+        System.out.println("<<< " + input);
         Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
 
-        try {
-            if (request.get("action").toString().equalsIgnoreCase("open")) {
-                String name = request.get("name").toString();
-                String surname =  request.get("surname").toString();
-                String type =  request.get("type").toString();
+        System.out.println(">>> " + request);
 
-                Account account = new Account(name, surname, type);
-                request.put("account", account.getAccountNumber());
-                return getState(DatabaseManager.openAccount(request), true);
+        try {
+            switch (request.get("action").toString().trim().toLowerCase()) {
+                case "open":
+                    return openAccount(request);
+                case "query":
+                    return searchAccount(request);
+                case "transact":
+                    return accountTransact(request);
+                case "issue":
+                    boolean success = DatabaseManager.issueCard(request);
+                    if (success)
+                        return getState(true, true);
+                    return getState("Card issue failed", false);
+                case "card":
+                    return getCard(request);
+                default:
+                    return getState("Failed to process request", false);
             }
         } catch (NullPointerException e) {
             return getState("Failed to process request", false);
         }
+    }
 
-        return json.toJson(request);
+    private static String getCard(Map<String, Object> request) throws NullPointerException {
+        Map<?, ?> data = (Map<?, ?>) request.get("data");
+        String account = data.get("account").toString();
+        String list = data.containsKey("list") ? data.get("list").toString() : "current";
+        if (list.equalsIgnoreCase("all"))
+            return getState(DatabaseManager.getLinkedCards(account), true);
+        return getState(DatabaseManager.getCurrentCard(account), true);
+    }
+
+    private static String accountTransact(Map<String, Object> request) throws NullPointerException {
+        Map<?, ?> data = (Map<?, ?>) request.get("data");
+
+        long from = Integer.parseInt(data.get("payer").toString());
+        long to = Integer.parseInt(data.get("beneficiary").toString());
+        String desc = data.get("description").toString();
+        String type = data.get("type").toString();
+        double amount = Double.parseDouble(data.get("amount").toString());
+        boolean fromAccount = (Boolean) data.get("from_account");
+
+        return getState(DatabaseManager.makeTransaction(from, to, desc, type, amount, fromAccount), true);
+    }
+
+    private static String searchAccount(Map<String, Object> request) throws NullPointerException {
+        if (request.containsKey("params") && request.containsKey("params")) {
+            Map<?, ?> data = (Map<?, ?>) request.get("search");
+            String name = data.get("name").toString();
+            String surname = data.get("surname").toString();
+            String card = data.get("card").toString();
+            String account = data.get("account").toString();
+            return getState(DatabaseManager.getAccounts(account, name, surname, card, true), true);
+        } else if (request.containsKey("search")) {
+            String search = request.get("search").toString();
+            return getState(DatabaseManager.getAccounts(search, search, search, search, false), true);
+        }
+        return getState(DatabaseManager.getAccounts(), true);
+    }
+
+    private static String openAccount(Map<String, Object> request) throws NullPointerException {
+        String name = request.get("name").toString();
+        String surname =  request.get("surname").toString();
+        String type =  request.get("type").toString();
+
+        Account account = new Account(name, surname, type);
+        request.put("account", account.getAccountNumber());
+        return getState(DatabaseManager.openAccount(request), true);
     }
 
     private static String getState(Object result, boolean success) {

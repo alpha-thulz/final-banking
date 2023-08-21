@@ -2,7 +2,6 @@ package za.co.tyaphile.database;
 
 
 import za.co.tyaphile.BankServer;
-import za.co.tyaphile.account.Account;
 import za.co.tyaphile.card.Card;
 import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.info.Info;
@@ -20,172 +19,6 @@ import java.util.regex.Pattern;
 public class DatabaseManager {
     private static Connection connection;
 
-    public static void createTables() {
-        String[] tables = {accountsTable, cardsTable, transactsTable, notesTable};
-
-        for(String sql : tables) {
-            PreparedStatement ps = null;
-            try {
-                setConnection();
-                ps = connection.prepareStatement(sql);
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                printStackTrace("Table create error", e);
-            } finally {
-                try {
-                    connection.close();
-                    if (ps != null) ps.close();
-                } catch (SQLException e) {
-                    printStackTrace("Closing connections error", e);
-                }
-            }
-        }
-    }
-
-    public static boolean openAccount(Map<String, Object> request) {
-        String sql, account = request.get("account").toString(), admin = request.get("admin").toString();
-        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
-
-        if(!isOnHold) {
-            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type) VALUES (?, ?, ?, ?);";
-        } else {
-            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type, account_hold) VALUES (?, ?, ?, ?, ?);";
-            addNote(account, admin, request.get("note").toString());
-        }
-        PreparedStatement ps = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ps.setLong(1, Long.parseLong(account));
-            ps.setString(2, request.get("name").toString());
-            ps.setString(3, request.get("surname").toString());
-            ps.setString(4, request.get("type").toString());
-
-            if(isOnHold) {
-                ps.setBoolean(5, true);
-            }
-
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            printStackTrace("SQL Error", e);
-            return false;
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-        addNote(account, admin, "New account opened");
-        issueCard(request);
-        return true;
-    }
-
-    public static List<Map<String, Object>> getAccounts() {
-        List<Map<String, Object>> accounts = new ArrayList<>();
-        String sql = "SELECT * FROM accounts INNER JOIN cards ON account_no=card_linked_account GROUP BY account_no;";
-        PreparedStatement ps = null;
-        ResultSet rs = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            rs = ps.executeQuery();
-
-            while (rs.next()) {
-                Map<String, Object> acc = new HashMap<>();
-                acc.put("name", rs.getString("customer_name"));
-                acc.put("surname", rs.getString("customer_surname"));
-                acc.put("account_number", rs.getString("account_no"));
-                acc.put("type", rs.getString("account_type"));
-                acc.put("balance", rs.getDouble("balance"));
-                accounts.add(acc);
-            }
-        } catch (SQLException e) {
-            printStackTrace("Account fetch error", e);
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-                if (rs != null) rs.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-
-        return accounts;
-    }
-
-    public static List<Map<String, Object>> getAccounts(String account, String name, String surname, String card, boolean match) {
-        List<Map<String, Object>> accounts = new ArrayList<>();
-
-        String sql;
-        if (match) {
-            sql = "SELECT * FROM accounts " +
-                    "INNER JOIN cards ON account_no=card_linked_account " +
-                    "WHERE (account_no=? AND customer_name=? AND customer_surname=?) OR card_no=?" +
-                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
-        } else {
-            sql = "SELECT * FROM accounts " +
-                    "INNER JOIN cards ON account_no=card_linked_account " +
-                    "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) " +
-                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
-        }
-        PreparedStatement ps = null;
-        ResultSet rs = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-
-            String val = account.replaceAll("\\D+", "");
-            Pattern pattern = Pattern.compile("\\d+");
-            Matcher matcher = pattern.matcher(val);
-            if(matcher.matches()) {
-                ps.setLong(1, Long.parseLong(val));
-            } else {
-                ps.setLong(1, -1);
-            }
-
-            ps.setString(2, name);
-            ps.setString(3, surname);
-            ps.setString(4, getFormatCardNumber(card));
-
-            rs = ps.executeQuery();
-
-            while (rs.next()) {
-                Map<String, Object> acc = new HashMap<>();
-                acc.put("account_number", rs.getString("account_no"));
-                acc.put("name", rs.getString("customer_name"));
-                acc.put("surname", rs.getString("customer_surname"));
-                acc.put("type", rs.getString("account_type"));
-                acc.put("on_hold", rs.getBoolean("account_hold"));
-                acc.put("on_close", rs.getBoolean("account_close"));
-                acc.put("balance", rs.getDouble("balance"));
-                acc.put("overdraft_balance", rs.getDouble("overdraft_balance"));
-                acc.put("overdraft_limit", rs.getDouble("overdraft_limit"));
-                acc.put("open_date", rs.getTimestamp("account_open_date"));
-                acc.put("card", rs.getString("card_no"));
-                acc.put("card_hold", rs.getBoolean("card_hold"));
-                acc.put("card_fraud", rs.getBoolean("card_fraud"));
-                acc.put("issue_date", rs.getTimestamp("card_issue_date"));
-                acc.put("notes", getNotes(rs.getString("account_no")));
-                accounts.add(acc);
-            }
-        } catch (SQLException e) {
-            printStackTrace("Account fetch error", e);
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-                if (rs != null) rs.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-
-        return accounts;
-    }
-
     public static boolean updateLimit(String account, double amount) {
         String sql;
         PreparedStatement ps = null;;
@@ -195,9 +28,7 @@ public class DatabaseManager {
             if (amount > 0) {
                 sql = "UPDATE accounts SET overdraft_limit = ?, overdraft_balance = (CASE " +
                         "WHEN overdraft_limit - ? <= overdraft_balance THEN overdraft_balance - ? " +
-                        "WHEN overdraft_balance IS NULL THEN ? " +
-                        "ELSE overdraft_balance END) " +
-                        "WHERE account_no = ?";
+                        "WHEN overdraft_balance IS NULL THEN ? ELSE overdraft_balance END) WHERE account_no = ?";
                 ps = connection.prepareStatement(sql);
                 ps.setDouble(1, amount);
                 ps.setDouble(2, amount);
@@ -224,9 +55,11 @@ public class DatabaseManager {
         return update;
     }
 
-    private static Map<String, Double> getBalance(String account) throws SQLException {
+    public static Map<String, Double> getBalance(String account) throws SQLException {
         Map<String, Double> balance = new HashMap<>();
         String sql = "SELECT balance, overdraft_balance, overdraft_limit FROM accounts WHERE account_no = ?";
+
+        setConnection();
 
         PreparedStatement ps = connection.prepareStatement(sql);
         ps.setString(1, account);
@@ -244,7 +77,6 @@ public class DatabaseManager {
     private static boolean setBalance(long account, double amount) throws SQLException {
         String sql = "UPDATE accounts SET balance = balance + ?, " +
                 "overdraft_balance = overdraft_balance + ? WHERE account_no = ?";
-
         PreparedStatement ps = connection.prepareStatement(sql);
 
         Map<String, Double> balances = getBalance(String.valueOf(account));
@@ -253,22 +85,20 @@ public class DatabaseManager {
         double overdraft_limit = balances.get("overdraft_limit");
 
         double difference = 0;
-
         if (amount > 0) {
             if (overdraft < overdraft_limit) {
                 difference = overdraft_limit - overdraft;
             }
-            ps.setDouble(1, amount - difference);
-            ps.setDouble(2, difference);
-            ps.setLong(3, account);
         } else {
-            if (Math.abs(amount) > balance) {
-                difference = amount - balance;
+            if (Math.abs(amount) > (balance + overdraft)) return false;
+
+            if ((balance - amount) < 0) {
+                difference = balance - Math.abs(amount);
             }
-            ps.setDouble(1, amount - difference);
-            ps.setDouble(2, difference);
-            ps.setLong(3, account);
         }
+        ps.setDouble(1, amount - difference);
+        ps.setDouble(2, difference);
+        ps.setLong(3, account);
         ps.executeUpdate();
         return true;
     }
@@ -293,6 +123,8 @@ public class DatabaseManager {
                     ps.setString(4, type);
                     ps.setDouble(5, amount);
                     ps.executeUpdate();
+                } else {
+                    return false;
                 }
             } else {
                 if (setBalance(to, amount)) {
@@ -304,6 +136,8 @@ public class DatabaseManager {
                     ps.setString(4, type);
                     ps.setDouble(5, amount);
                     ps.executeUpdate();
+                } else {
+                    return false;
                 }
             }
             connection.commit();
@@ -336,13 +170,13 @@ public class DatabaseManager {
         if(isOnHold || !isCardHold && !getCurrentCard(account).isEmpty()) {
             return false;
         }
-        Card card;
         PreparedStatement ps = null;
         String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
         if (addNote(account, admin, "Issued new card")) {
+            Card card;
             try {
                 setConnection();
-                card = new Card(account);
+                card = new Card();
                 ps = connection.prepareStatement(sql);
                 ps.setString(1, Card.formatCardNumber(card.getCardNumber()));
                 ps.setString(2, card.getCardPin());
@@ -418,7 +252,6 @@ public class DatabaseManager {
                 card.put("card_no", cardNumber);
                 card.put("card_pin", rs.getString("card_pin"));
                 card.put("card_cvv", rs.getString("card_cvv"));
-
                 card.put("card_fraud", rs.getBoolean("card_fraud"));
                 card.put("card_hold", rs.getBoolean("card_hold"));
                 card.put("remarks", getNotes(cardNumber));
@@ -661,18 +494,18 @@ public class DatabaseManager {
     public static void initTables() {
         if(BankServer.isMySQL()) {
 //            System.out.println("MySQL");
-            accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
-                    "\taccount_id BIGINT AUTO_INCREMENT PRIMARY KEY, \n" +
-                    "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
-                    "\tcustomer_name VARCHAR(255) NOT NULL, \n" +
-                    "\tcustomer_surname VARCHAR(255) NOT NULL, \n" +
-                    "    account_type VARCHAR(45) NOT NULL,\n" +
-                    "\taccount_hold TINYINT(1) DEFAULT 0, \n" +
-                    "\taccount_close TINYINT(1) DEFAULT 0, \n" +
-                    "\tbalance DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "    overdraft_balance DECIMAL(13, 2), \n" +
-                    "    overdraft_limit DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "\taccount_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
+            accountsTable = "CREATE TABLE IF NOT EXISTS accounts (" +
+                    "account_id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
+                    "account_no BIGINT UNIQUE NOT NULL, " +
+                    "customer_name VARCHAR(255) NOT NULL, " +
+                    "customer_surname VARCHAR(255) NOT NULL, " +
+                    "account_type VARCHAR(45) NOT NULL, " +
+                    "account_hold TINYINT(1) DEFAULT 0, " +
+                    "account_close TINYINT(1) DEFAULT 0, " +
+                    "balance DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "overdraft_balance DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "overdraft_limit DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "account_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
                     ");";
 
             cardsTable = "CREATE TABLE IF NOT EXISTS cards (\n" +
@@ -705,18 +538,18 @@ public class DatabaseManager {
                     ");";
         } else {
 //            System.out.println("SQLite");
-            accountsTable = "CREATE TABLE IF NOT EXISTS accounts (\n" +
-                    "\taccount_id INTEGER PRIMARY KEY, \n" +
-                    "\taccount_no BIGINT UNIQUE NOT NULL, \n" +
-                    "\tcustomer_name VARCHAR(255) NOT NULL, \n" +
-                    "\tcustomer_surname VARCHAR(255) NOT NULL, \n" +
-                    "    account_type VARCHAR(45) NOT NULL,\n" +
-                    "\taccount_hold TINYINT(1) DEFAULT 0, \n" +
-                    "\taccount_close TINYINT(1) DEFAULT 0, \n" +
-                    "\tbalance DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "    overdraft_balance DECIMAL(13, 2), \n" +
-                    "    overdraft_limit DECIMAL(13, 2) DEFAULT 0.00, \n" +
-                    "\taccount_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
+            accountsTable = "CREATE TABLE IF NOT EXISTS accounts (" +
+                    "account_id INTEGER PRIMARY KEY, " +
+                    "account_no BIGINT UNIQUE NOT NULL, " +
+                    "customer_name VARCHAR(255) NOT NULL, " +
+                    "customer_surname VARCHAR(255) NOT NULL, " +
+                    "account_type VARCHAR(45) NOT NULL, " +
+                    "account_hold TINYINT(1) DEFAULT 0, " +
+                    "account_close TINYINT(1) DEFAULT 0, " +
+                    "balance DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "overdraft_balance DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "overdraft_limit DECIMAL(13, 2) NOT NULL DEFAULT 0.00, " +
+                    "account_open_date TIMESTAMP DEFAULT (datetime('now','localtime'))" +
                     ");";
 
             cardsTable = "CREATE TABLE IF NOT EXISTS cards (\n" +
@@ -749,6 +582,180 @@ public class DatabaseManager {
                     ");";
         }
     }
+
+    public static void createTables() {
+        String[] tables = {accountsTable, cardsTable, transactsTable, notesTable};
+
+        for(String sql : tables) {
+            PreparedStatement ps = null;
+            try {
+                setConnection();
+                ps = connection.prepareStatement(sql);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                printStackTrace("Table create error", e);
+            } finally {
+                try {
+                    connection.close();
+                    if (ps != null) ps.close();
+                } catch (SQLException e) {
+                    printStackTrace("Closing connections error", e);
+                }
+            }
+        }
+    }
+
+    public static boolean openAccount(Map<String, Object> request) {
+        String sql, account = request.get("account").toString(), admin = request.get("admin").toString();
+        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
+
+        if(!isOnHold) {
+            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type) VALUES (?, ?, ?, ?);";
+        } else {
+            sql = "INSERT INTO accounts (account_no, customer_name, customer_surname, account_type, account_hold) VALUES (?, ?, ?, ?, ?);";
+            addNote(account, admin, request.get("note").toString());
+        }
+        PreparedStatement ps = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ps.setLong(1, Long.parseLong(account));
+            ps.setString(2, request.get("name").toString());
+            ps.setString(3, request.get("surname").toString());
+            ps.setString(4, request.get("type").toString());
+
+            if(isOnHold) {
+                ps.setBoolean(5, true);
+            }
+
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            printStackTrace("SQL Error", e);
+            return false;
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        addNote(account, admin, "New account opened");
+        issueCard(request);
+        return true;
+    }
+
+    public static String formatAccount(String account) {
+        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance();
+        symbols.setGroupingSeparator('-');
+        DecimalFormat df = new DecimalFormat("00,000,000,000", symbols);
+        return df.format(Double.parseDouble(account));
+    }
+
+    public static List<Map<String, Object>> getAccounts() {
+        List<Map<String, Object>> accounts = new ArrayList<>();
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON account_no=card_linked_account GROUP BY account_no;";
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            rs = ps.executeQuery();
+
+            while (rs.next()) {
+                Map<String, Object> acc = new HashMap<>();
+                acc.put("name", rs.getString("customer_name"));
+                acc.put("surname", rs.getString("customer_surname"));
+                acc.put("account_number", formatAccount(rs.getString("account_no")));
+                acc.put("type", rs.getString("account_type"));
+                acc.put("balance", rs.getDouble("balance"));
+                accounts.add(acc);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Account fetch error", e);
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+                if (rs != null) rs.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+
+        return accounts;
+    }
+
+    public static List<Map<String, Object>> getAccounts(String account, String name, String surname, String card, boolean match) {
+        List<Map<String, Object>> accounts = new ArrayList<>();
+
+        String sql;
+        if (match) {
+            sql = "SELECT * FROM accounts " +
+                    "INNER JOIN cards ON account_no=card_linked_account " +
+                    "WHERE (account_no=? AND customer_name=? AND customer_surname=?) OR card_no=?" +
+                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
+        } else {
+            sql = "SELECT * FROM accounts " +
+                    "INNER JOIN cards ON account_no=card_linked_account " +
+                    "WHERE (account_no=? OR customer_name=? OR customer_surname=? OR card_no=?) " +
+                    "GROUP BY account_no ORDER BY card_issue_date DESC;";
+        }
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+
+            String val = account.replaceAll("\\D+", "");
+            Pattern pattern = Pattern.compile("\\d+");
+            Matcher matcher = pattern.matcher(val);
+            if(matcher.matches()) {
+                ps.setLong(1, Long.parseLong(val));
+            } else {
+                ps.setLong(1, -1);
+            }
+
+            ps.setString(2, name);
+            ps.setString(3, surname);
+            ps.setString(4, getFormatCardNumber(card));
+
+            rs = ps.executeQuery();
+
+            while (rs.next()) {
+                Map<String, Object> acc = new HashMap<>();
+                acc.put("account_number", formatAccount(rs.getString("account_no")));
+                acc.put("name", rs.getString("customer_name"));
+                acc.put("surname", rs.getString("customer_surname"));
+                acc.put("type", rs.getString("account_type"));
+                acc.put("on_hold", rs.getBoolean("account_hold"));
+                acc.put("on_close", rs.getBoolean("account_close"));
+                acc.put("balance", rs.getDouble("balance"));
+                acc.put("overdraft_balance", rs.getDouble("overdraft_balance"));
+                acc.put("overdraft_limit", rs.getDouble("overdraft_limit"));
+                acc.put("open_date", rs.getTimestamp("account_open_date"));
+                acc.put("card", rs.getString("card_no"));
+                acc.put("card_hold", rs.getBoolean("card_hold"));
+                acc.put("card_fraud", rs.getBoolean("card_fraud"));
+                acc.put("issue_date", rs.getTimestamp("card_issue_date"));
+                acc.put("notes", getNotes(rs.getString("account_no")));
+                accounts.add(acc);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Account fetch error", e);
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+                if (rs != null) rs.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+
+        return accounts;
+    }
+
 
     private static String accountsTable;
     private static String cardsTable;
