@@ -15,8 +15,42 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class DatabaseTest {
 
-    private static Map<String, Object> john = new HashMap<>();
-    private static Map<String, Object> jane = new HashMap<>();
+    private static Map<String, Object> john, jane;
+
+    @Test
+    void testAccountOnHold() {
+        long accountFrom = Integer.parseInt(john.get("account").toString());
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+        String description = "Capital";
+        String type = "EFT";
+        john.put("hold", true);
+        john.put("close", false);
+        john.put("note", "Hold account test");
+
+        assertTrue(DatabaseManager.makeTransaction(100000000, accountFrom, description, type, 500, false));
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 100, true));
+        assertTrue(DatabaseManager.accountHold(john));
+        assertFalse(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 100, true));
+
+        john.put("hold", false);
+        assertTrue(DatabaseManager.accountHold(john));
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 100, true));
+    }
+
+    @Test
+    void testCardReIssue() {
+        String account = john.get("account").toString();
+        Map<?, ?> request = DatabaseManager.getCurrentCard(account).get(account);
+        String originalCard = request.get("card").toString();
+        assertNotNull(originalCard);
+        assertFalse(DatabaseManager.issueCard(john));
+        assertTrue(DatabaseManager.cardControl(originalCard, "Admin", "Stop test", true, false));
+        assertTrue(DatabaseManager.issueCard(john));
+        request = DatabaseManager.getCurrentCard(account).get(account);
+        String newCard = request.get("card").toString();
+        assertNotNull(newCard);
+        assertNotEquals(originalCard, newCard);
+    }
 
     @Test
     void testTransactWithOverdraft() throws SQLException {
@@ -178,6 +212,9 @@ public class DatabaseTest {
 
     @BeforeEach
     void setDatabase() {
+        john = new HashMap<>();
+        jane = new HashMap<>();
+
         john.put("account", "510000000");
         john.put("admin", "Admin");
         john.put("name", "John");

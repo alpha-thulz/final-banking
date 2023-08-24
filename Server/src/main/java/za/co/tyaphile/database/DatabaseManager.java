@@ -19,285 +19,6 @@ import java.util.regex.Pattern;
 public class DatabaseManager {
     private static Connection connection;
 
-    public static boolean updateLimit(String account, double amount) {
-        String sql;
-        PreparedStatement ps = null;
-        boolean update = false;
-        try {
-            double current = amount - DatabaseManager.getBalance(account).get("overdraft_limit");
-            setConnection();
-            sql = "UPDATE accounts SET overdraft_balance = overdraft_balance + ?, overdraft_limit = ? WHERE account_no = ?";
-            ps = connection.prepareStatement(sql);
-            ps.setDouble(1, current);
-            ps.setDouble(2, amount);
-            ps.setString(3, account);
-            update =  ps.executeUpdate() > 0;
-        } catch (SQLException e) {
-            printStackTrace("Update limit failure", e);
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-            } catch (SQLException e) {
-                printStackTrace("Unable to close connection", e);
-            }
-        }
-        return update;
-    }
-
-    public static Map<String, Double> getBalance(String account) throws SQLException {
-        Map<String, Double> balance = new HashMap<>();
-        String sql = "SELECT balance, overdraft_balance, overdraft_limit FROM accounts WHERE account_no = ?";
-
-        setConnection();
-
-        PreparedStatement ps = connection.prepareStatement(sql);
-        ps.setString(1, account);
-        ResultSet rs = ps.executeQuery();
-
-        while (rs.next()) {
-            balance.put("balance", rs.getDouble("balance"));
-            balance.put("overdraft", rs.getDouble("overdraft_balance"));
-            balance.put("overdraft_limit", rs.getDouble("overdraft_limit"));
-        }
-
-        return balance;
-    }
-
-    private static boolean setBalance(long account, double amount) throws SQLException {
-        String sql = "UPDATE accounts SET balance = balance + ?, " +
-                "overdraft_balance = overdraft_balance + ? WHERE account_no = ?";
-        PreparedStatement ps = connection.prepareStatement(sql);
-
-        Map<String, Double> balances = getBalance(String.valueOf(account));
-        double balance = balances.get("balance");
-        double overdraft = balances.get("overdraft");
-        double overdraft_limit = balances.get("overdraft_limit");
-
-        double difference = 0;
-        if (amount > 0) {
-            if (overdraft < overdraft_limit) {
-                difference = overdraft_limit - overdraft;
-            }
-        } else {
-            if (Math.abs(amount) > (balance + overdraft)) return false;
-
-            if ((balance - Math.abs(amount)) < 0) {
-                difference = balance - Math.abs(amount);
-            }
-        }
-        ps.setDouble(1, amount - difference);
-        ps.setDouble(2, difference);
-        ps.setLong(3, account);
-        ps.executeUpdate();
-        return true;
-    }
-
-    public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount, boolean fromAccount) {
-        boolean successful = false;
-
-        String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
-                " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
-
-        PreparedStatement ps = null;
-        try {
-            setConnection();
-            connection.setAutoCommit(false);
-            if (fromAccount) {
-                if (setBalance(from, -amount) && setBalance(to, amount)) {
-                    ps = connection.prepareStatement(sql);
-
-                    ps.setLong(1, from);
-                    ps.setLong(2, to);
-                    ps.setString(3, desc);
-                    ps.setString(4, type);
-                    ps.setDouble(5, amount);
-                    ps.executeUpdate();
-                } else {
-                    return false;
-                }
-            } else {
-                if (setBalance(to, amount)) {
-                    ps = connection.prepareStatement(sql);
-
-                    ps.setLong(1, from);
-                    ps.setLong(2, to);
-                    ps.setString(3, desc);
-                    ps.setString(4, type);
-                    ps.setDouble(5, amount);
-                    ps.executeUpdate();
-                } else {
-                    return false;
-                }
-            }
-            connection.commit();
-            successful = true;
-        } catch (SQLException e) {
-            printStackTrace("Deposit error", e);
-            try {
-                connection.rollback();
-            } catch (SQLException ex) {
-                printStackTrace("Rollback error", ex);
-            }
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-        return successful;
-    }
-
-    public static boolean issueCard(Map<String, Object> request) {
-        String account = request.get("account").toString(), admin = request.get("admin").toString();
-        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
-
-        boolean isCardHold = getCurrentCard(account).values().stream()
-                .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
-
-        if(isOnHold || !isCardHold && !getCurrentCard(account).isEmpty()) {
-            return false;
-        }
-        PreparedStatement ps = null;
-        String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
-        if (addNote(account, admin, "Issued new card")) {
-            Card card;
-            try {
-                setConnection();
-                card = new Card();
-                ps = connection.prepareStatement(sql);
-                ps.setString(1, Card.formatCardNumber(card.getCardNumber()));
-                ps.setString(2, card.getCardPin());
-                ps.setString(3, card.getCVV());
-                ps.setLong(4, Long.parseLong(account));
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                printStackTrace("Card issue error", e);
-                return false;
-            } finally {
-                try {
-                    connection.close();
-                    if (ps != null) ps.close();
-                } catch (SQLException e) {
-                    printStackTrace("Closing connections error", e);
-                }
-            }
-            addNote(Card.formatCardNumber(card.getCardNumber()), admin, account + " linked with card " + Card.formatCardNumber(card.getCardNumber()));
-        }
-        return true;
-    }
-
-    public static Map<String, Map<String, Object>> getCurrentCard(String param) {
-        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=? " +
-                "ORDER BY card_id DESC LIMIT 1;";
-        Map<String, Map<String, Object>> card = new HashMap<>();
-        PreparedStatement ps = null;
-        ResultSet rs = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ps.setString(1, param);
-            rs = ps.executeQuery();
-            while (rs.next()) {
-                String cardNumber = rs.getString("card_no");
-                Map<String, Object> cardDetails = new HashMap<>();
-                cardDetails.put("card", cardNumber);
-                cardDetails.put("card_pin", rs.getString("card_pin"));
-                cardDetails.put("card_cvv", rs.getString("card_cvv"));
-
-                cardDetails.put("card_fraud", rs.getBoolean("card_fraud"));
-                cardDetails.put("card_hold", rs.getBoolean("card_hold"));
-                cardDetails.put("remarks", getNotes(cardNumber));
-                card.put(param, cardDetails);
-            }
-        } catch (SQLException e) {
-            printStackTrace("Getting cards error", e);
-        }  finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-                if (rs != null) rs.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-        return card;
-    }
-
-    public static List<Map<String, Object>> getLinkedCards(String param) {
-        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=?;";
-        List<Map<String, Object>> cards = new ArrayList<>();
-        PreparedStatement ps = null;
-        ResultSet rs = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ps.setString(1, param);
-            rs = ps.executeQuery();
-            while (rs.next()) {
-                Map<String, Object> card = new HashMap<>();
-                String cardNumber = rs.getString("card_no");
-                card.put("card_no", cardNumber);
-                card.put("card_pin", rs.getString("card_pin"));
-                card.put("card_cvv", rs.getString("card_cvv"));
-                card.put("card_fraud", rs.getBoolean("card_fraud"));
-                card.put("card_hold", rs.getBoolean("card_hold"));
-                card.put("remarks", getNotes(cardNumber));
-                cards.add(card);
-            }
-        } catch (SQLException e) {
-            printStackTrace("Getting cards error", e);
-        }  finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-                if (rs != null) rs.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-        return cards;
-    }
-
-    public static boolean addNote(String link_to, String admin, String notes) {
-        String sql = "INSERT INTO notes (notes_link_to, added_by, notes) VALUES (?, ?, ?);";
-        PreparedStatement ps = null;
-        try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ps.setString(1, link_to);
-            ps.setString(2, admin);
-            ps.setString(3, notes);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            printStackTrace("Note error", e);
-            return false;
-        } finally {
-            try {
-                connection.close();
-                if (ps != null) ps.close();
-            } catch (SQLException e) {
-                printStackTrace("Closing connections error", e);
-            }
-        }
-        return true;
-    }
-
-    public static List<String> getNotes(String param) throws SQLException {
-        String sql = "SELECT * FROM notes WHERE notes_link_to=?;";
-        List<String> notes = new ArrayList<>();
-        setConnection();
-        PreparedStatement ps = connection.prepareStatement(sql);
-        ps.setString(1, param);
-        ResultSet rs = ps.executeQuery();
-        while (rs.next()) {
-            notes.add("{" + rs.getString("added_by") + "} " + rs.getString("notes"));
-        }
-        return notes;
-    }
-
     public static List<Map<String, Object>> getTransactions(long accFrom, long accTo, Timestamp fromDate) {
         String sql = getTransactionsSql(accFrom, accTo);
 
@@ -395,12 +116,12 @@ public class DatabaseManager {
         String note = request.get("note").toString();
 
         try {
-            setConnection();
-            ps = connection.prepareStatement(sql);
-            ps.setBoolean(1, isClose);
-            ps.setBoolean(2, isHold);
-            ps.setString(3, account);
             if (addNote(account, admin, note)) {
+                setConnection();
+                ps = connection.prepareStatement(sql);
+                ps.setBoolean(1, isClose);
+                ps.setBoolean(2, isHold);
+                ps.setString(3, account);
                 ps.executeUpdate();
                 return true;
             }
@@ -746,6 +467,299 @@ public class DatabaseManager {
         return accounts;
     }
 
+    public static boolean updateLimit(String account, double amount) {
+        String sql;
+        PreparedStatement ps = null;
+        boolean update = false;
+        try {
+            double current = amount - DatabaseManager.getBalance(account).get("overdraft_limit");
+            setConnection();
+            sql = "UPDATE accounts SET overdraft_balance = overdraft_balance + ?, overdraft_limit = ? WHERE account_no = ?";
+            ps = connection.prepareStatement(sql);
+            ps.setDouble(1, current);
+            ps.setDouble(2, amount);
+            ps.setString(3, account);
+            update =  ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            printStackTrace("Update limit failure", e);
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+            } catch (SQLException e) {
+                printStackTrace("Unable to close connection", e);
+            }
+        }
+        return update;
+    }
+
+    public static Map<String, Double> getBalance(String account) throws SQLException {
+        Map<String, Double> balance = new HashMap<>();
+        String sql = "SELECT balance, overdraft_balance, overdraft_limit FROM accounts WHERE account_no = ?";
+
+        setConnection();
+
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, account);
+        ResultSet rs = ps.executeQuery();
+
+        while (rs.next()) {
+            balance.put("balance", rs.getDouble("balance"));
+            balance.put("overdraft", rs.getDouble("overdraft_balance"));
+            balance.put("overdraft_limit", rs.getDouble("overdraft_limit"));
+        }
+
+        return balance;
+    }
+
+    private static boolean setBalance(long account, double amount) throws SQLException {
+        String sql = "UPDATE accounts SET balance = balance + ?, " +
+                "overdraft_balance = overdraft_balance + ? WHERE account_no = ?";
+        PreparedStatement ps = connection.prepareStatement(sql);
+
+        Map<String, Double> balances = getBalance(String.valueOf(account));
+        double balance = balances.get("balance");
+        double overdraft = balances.get("overdraft");
+        double overdraft_limit = balances.get("overdraft_limit");
+
+        double difference = 0;
+        if (amount > 0) {
+            if (overdraft < overdraft_limit) {
+                difference = overdraft_limit - overdraft;
+            }
+        } else {
+            if (Math.abs(amount) > (balance + overdraft)) return false;
+
+            if ((balance - Math.abs(amount)) < 0) {
+                difference = balance - Math.abs(amount);
+            }
+        }
+        ps.setDouble(1, amount - difference);
+        ps.setDouble(2, difference);
+        ps.setLong(3, account);
+        ps.executeUpdate();
+        return true;
+    }
+
+    public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount, boolean fromAccount) {
+        boolean successful = false;
+
+        String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
+                " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
+
+        PreparedStatement ps = null;
+        try {
+
+            String card = null;
+
+            try {
+                card = getCurrentCard(String.valueOf(from)).get(String.valueOf(from)).get("card").toString();
+            } catch (NullPointerException ignored) {}
+
+
+            if (fromAccount &&
+                    (Boolean) getAccounts(String.valueOf(from), null, null, card, false)
+                            .get(0)
+                            .get("on_hold")) {
+                return false;
+            }
+
+            setConnection();
+            connection.setAutoCommit(false);
+            if (fromAccount) {
+                if (setBalance(from, -amount) && setBalance(to, amount)) {
+                    ps = connection.prepareStatement(sql);
+
+                    ps.setLong(1, from);
+                    ps.setLong(2, to);
+                    ps.setString(3, desc);
+                    ps.setString(4, type);
+                    ps.setDouble(5, amount);
+                    ps.executeUpdate();
+                } else {
+                    return false;
+                }
+            } else {
+                if (setBalance(to, amount)) {
+                    ps = connection.prepareStatement(sql);
+
+                    ps.setLong(1, from);
+                    ps.setLong(2, to);
+                    ps.setString(3, desc);
+                    ps.setString(4, type);
+                    ps.setDouble(5, amount);
+                    ps.executeUpdate();
+                } else {
+                    return false;
+                }
+            }
+            connection.commit();
+            successful = true;
+        } catch (SQLException e) {
+            printStackTrace("Deposit error", e);
+            try {
+                connection.rollback();
+            } catch (SQLException ex) {
+                printStackTrace("Rollback error", ex);
+            }
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        return successful;
+    }
+
+    public static Map<String, Map<String, Object>> getCurrentCard(String param) {
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=? " +
+                "ORDER BY card_id DESC LIMIT 1;";
+        Map<String, Map<String, Object>> card = new HashMap<>();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ps.setString(1, param);
+            rs = ps.executeQuery();
+            while (rs.next()) {
+                String cardNumber = rs.getString("card_no");
+                Map<String, Object> cardDetails = new HashMap<>();
+                cardDetails.put("card", cardNumber);
+                cardDetails.put("card_pin", rs.getString("card_pin"));
+                cardDetails.put("card_cvv", rs.getString("card_cvv"));
+
+                cardDetails.put("card_fraud", rs.getBoolean("card_fraud"));
+                cardDetails.put("card_hold", rs.getBoolean("card_hold"));
+                cardDetails.put("remarks", getNotes(cardNumber));
+                card.put(param, cardDetails);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Getting cards error", e);
+        }  finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+                if (rs != null) rs.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        return card;
+    }
+
+    public static List<Map<String, Object>> getLinkedCards(String param) {
+        String sql = "SELECT * FROM accounts INNER JOIN cards ON card_linked_account=account_no  WHERE account_no=?;";
+        List<Map<String, Object>> cards = new ArrayList<>();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ps.setString(1, param);
+            rs = ps.executeQuery();
+            while (rs.next()) {
+                Map<String, Object> card = new HashMap<>();
+                String cardNumber = rs.getString("card_no");
+                card.put("card_no", cardNumber);
+                card.put("card_pin", rs.getString("card_pin"));
+                card.put("card_cvv", rs.getString("card_cvv"));
+                card.put("card_fraud", rs.getBoolean("card_fraud"));
+                card.put("card_hold", rs.getBoolean("card_hold"));
+                card.put("remarks", getNotes(cardNumber));
+                cards.add(card);
+            }
+        } catch (SQLException e) {
+            printStackTrace("Getting cards error", e);
+        }  finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+                if (rs != null) rs.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        return cards;
+    }
+
+    public static boolean issueCard(Map<String, Object> request) {
+        String account = request.get("account").toString(), admin = request.get("admin").toString();
+        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
+
+        boolean isCardHold = getCurrentCard(account).values().stream()
+                .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
+
+        if(isOnHold || !isCardHold && !getCurrentCard(account).isEmpty()) {
+            return false;
+        }
+        PreparedStatement ps = null;
+        String sql = "INSERT INTO cards (card_no, card_pin, card_cvv, card_linked_account) VALUES (?, ?, ?, ?)";
+        if (addNote(account, admin, "Issued new card")) {
+            Card card;
+            try {
+                setConnection();
+                card = new Card();
+                ps = connection.prepareStatement(sql);
+                ps.setString(1, Card.formatCardNumber(card.getCardNumber()));
+                ps.setString(2, card.getCardPin());
+                ps.setString(3, card.getCVV());
+                ps.setLong(4, Long.parseLong(account));
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                printStackTrace("Card issue error", e);
+                return false;
+            } finally {
+                try {
+                    connection.close();
+                    if (ps != null) ps.close();
+                } catch (SQLException e) {
+                    printStackTrace("Closing connections error", e);
+                }
+            }
+            addNote(Card.formatCardNumber(card.getCardNumber()), admin, account + " linked with card " + Card.formatCardNumber(card.getCardNumber()));
+        }
+        return true;
+    }
+
+    public static boolean addNote(String link_to, String admin, String notes) {
+        String sql = "INSERT INTO notes (notes_link_to, added_by, notes) VALUES (?, ?, ?);";
+        PreparedStatement ps = null;
+        try {
+            setConnection();
+            ps = connection.prepareStatement(sql);
+            ps.setString(1, link_to);
+            ps.setString(2, admin);
+            ps.setString(3, notes);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            printStackTrace("Note error", e);
+            return false;
+        } finally {
+            try {
+                connection.close();
+                if (ps != null) ps.close();
+            } catch (SQLException e) {
+                printStackTrace("Closing connections error", e);
+            }
+        }
+        return true;
+    }
+
+    public static List<String> getNotes(String param) throws SQLException {
+        String sql = "SELECT * FROM notes WHERE notes_link_to=?;";
+        List<String> notes = new ArrayList<>();
+        setConnection();
+        PreparedStatement ps = connection.prepareStatement(sql);
+        ps.setString(1, param);
+        ResultSet rs = ps.executeQuery();
+        while (rs.next()) {
+            notes.add("{" + rs.getString("added_by") + "} " + rs.getString("notes"));
+        }
+        return notes;
+    }
 
     private static String accountsTable;
     private static String cardsTable;
