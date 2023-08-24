@@ -19,22 +19,59 @@ public class DatabaseTest {
     private static Map<String, Object> jane = new HashMap<>();
 
     @Test
-    void testUpdateLimits() throws SQLException {
-        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 100));
+    void testTransactWithOverdraft() throws SQLException {
+        assertTrue(DatabaseManager.updateLimit(john.get("account").toString(), 100));
 
         Map<String, Double> balances = DatabaseManager.getBalance(john.get("account").toString());
         assertEquals(Double.valueOf(0), balances.get("balance"));
         assertEquals(Double.valueOf(100), balances.get("overdraft"));
         assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
 
-        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 200));
+        long accountFrom = Integer.parseInt(john.get("account").toString());
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+        String description = "Capital";
+        String type = "EFT";
+
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, description, type, 50, true));
+
         balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(50), balances.get("overdraft"));
+        assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
+
+        assertTrue(DatabaseManager.updateLimit(john.get("account").toString(), 0));
+
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(-50), balances.get("overdraft"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft_limit"));
+
+        assertTrue(DatabaseManager.makeTransaction(100000000,
+                Long.valueOf(john.get("account").toString()), "deposit", "EFT", 50, false));
+
+        balances = DatabaseManager.getBalance(john.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft"));
+        assertEquals(Double.valueOf(0), balances.get("overdraft_limit"));
+    }
+
+    @Test
+    void testUpdateLimits() throws SQLException {
+        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 100));
+
+        Map<String, Double> balances = DatabaseManager.getBalance(jane.get("account").toString());
         assertEquals(Double.valueOf(0), balances.get("balance"));
         assertEquals(Double.valueOf(100), balances.get("overdraft"));
         assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
 
+        assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 200));
+        balances = DatabaseManager.getBalance(jane.get("account").toString());
+        assertEquals(Double.valueOf(0), balances.get("balance"));
+        assertEquals(Double.valueOf(200), balances.get("overdraft"));
+        assertEquals(Double.valueOf(200), balances.get("overdraft_limit"));
+
         assertTrue(DatabaseManager.updateLimit(jane.get("account").toString(), 100));
-        balances = DatabaseManager.getBalance(john.get("account").toString());
+        balances = DatabaseManager.getBalance(jane.get("account").toString());
         assertEquals(Double.valueOf(0), balances.get("balance"));
         assertEquals(Double.valueOf(100), balances.get("overdraft"));
         assertEquals(Double.valueOf(100), balances.get("overdraft_limit"));
@@ -153,8 +190,7 @@ public class DatabaseTest {
         jane.put("surname", "Doe");
         jane.put("type", "Savings");
 
-        File file = new File("finance.db");
-        file.delete();
+        deleteFile();
 
         DatabaseManager.initTables();
         DatabaseManager.createTables();
@@ -166,8 +202,11 @@ public class DatabaseTest {
     @AfterEach
     void cleanUpDatabase() {
         DatabaseManager.closeConnection();
+        deleteFile();
+    }
 
+    private void deleteFile() {
         File file = new File("finance.db");
-        file.delete();
+        if (file.exists()) file.delete();
     }
 }

@@ -21,26 +21,16 @@ public class DatabaseManager {
 
     public static boolean updateLimit(String account, double amount) {
         String sql;
-        PreparedStatement ps = null;;
+        PreparedStatement ps = null;
         boolean update = false;
         try {
+            double current = amount - DatabaseManager.getBalance(account).get("overdraft_limit");
             setConnection();
-            if (amount > 0) {
-                sql = "UPDATE accounts SET overdraft_limit = ?, overdraft_balance = (CASE " +
-                        "WHEN overdraft_limit - ? <= overdraft_balance THEN overdraft_balance - ? " +
-                        "WHEN overdraft_balance IS NULL THEN ? ELSE overdraft_balance END) WHERE account_no = ?";
-                ps = connection.prepareStatement(sql);
-                ps.setDouble(1, amount);
-                ps.setDouble(2, amount);
-                ps.setDouble(3, amount);
-                ps.setDouble(4, amount);
-                ps.setString(5, account);
-            } else {
-                sql = "UPDATE accounts SET overdraft_balance = overdraft_balance - overdraft_limit, overdraft_limit = ? WHERE account_no = ?";
-                ps = connection.prepareStatement(sql);
-                ps.setDouble(1, amount);
-                ps.setString(2, account);
-            }
+            sql = "UPDATE accounts SET overdraft_balance = overdraft_balance + ?, overdraft_limit = ? WHERE account_no = ?";
+            ps = connection.prepareStatement(sql);
+            ps.setDouble(1, current);
+            ps.setDouble(2, amount);
+            ps.setString(3, account);
             update =  ps.executeUpdate() > 0;
         } catch (SQLException e) {
             printStackTrace("Update limit failure", e);
@@ -92,7 +82,7 @@ public class DatabaseManager {
         } else {
             if (Math.abs(amount) > (balance + overdraft)) return false;
 
-            if ((balance - amount) < 0) {
+            if ((balance - Math.abs(amount)) < 0) {
                 difference = balance - Math.abs(amount);
             }
         }
