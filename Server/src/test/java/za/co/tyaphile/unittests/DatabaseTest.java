@@ -7,6 +7,7 @@ import java.io.File;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +17,33 @@ import static org.junit.jupiter.api.Assertions.*;
 public class DatabaseTest {
 
     private static Map<String, Object> john, jane;
+
+    @Test
+    void testLinkedCardsTotal() {
+        for (int i = 0; i < 100; i++) {
+            Map<String, Map<String, Object>> result = DatabaseManager.getCurrentCard(jane.get("account").toString());
+            assertTrue(DatabaseManager.cardControl(
+                    ((Map<?, ?>) result.get(jane.get("account").toString())).get("card").toString(),
+                    "Admin", "Stop " + i, true, false));
+            assertTrue(DatabaseManager.issueCard(jane));
+        }
+        assertEquals(101, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
+    }
+
+    @Test
+    void testTransactionHistory() {
+        long accountFrom = Integer.parseInt(john.get("account").toString());
+        long accountTo = Integer.parseInt(jane.get("account").toString());
+
+        assertTrue(DatabaseManager.makeTransaction(100000000, accountFrom, "Deposit", "ATM Deposit", 10_000, false));
+        assertTrue(DatabaseManager.makeTransaction(accountFrom, accountTo, "Transfer", "EFT", 2500, true));
+        assertTrue(DatabaseManager.makeTransaction(accountTo, accountFrom, "Return", "EFT", 500, true));
+        assertEquals(3, DatabaseManager.getTransactions(0, accountFrom, Timestamp.valueOf(LocalDateTime.MIN)).size());
+        assertEquals(1, DatabaseManager.getTransactions(accountFrom, accountTo, Timestamp.valueOf(LocalDateTime.MIN)).size());
+        assertEquals(2, DatabaseManager.getTransactions(0, accountTo, Timestamp.valueOf(LocalDateTime.MIN)).size());
+        assertEquals(3, DatabaseManager.getTransactions(0, 0, Timestamp.valueOf(LocalDateTime.MIN)).size());
+        assertEquals(3, DatabaseManager.getTransactions(accountFrom, 0, Timestamp.valueOf(LocalDateTime.MIN)).size());
+    }
 
     @Test
     void testAccountOnHold() {
@@ -237,7 +265,7 @@ public class DatabaseTest {
     }
 
     @AfterEach
-    void cleanUpDatabase() {
+    void cleanUpDatabase() throws SQLException {
         DatabaseManager.closeConnection();
         deleteFile();
     }

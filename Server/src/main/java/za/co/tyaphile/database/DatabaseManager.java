@@ -135,7 +135,6 @@ public class DatabaseManager {
                 printStackTrace("Closing connections error", e);
             }
         }
-
         return false;
     }
 
@@ -177,12 +176,8 @@ public class DatabaseManager {
         }
     }
 
-    public static void closeConnection() {
-        try {
-            connection.close();
-        } catch (SQLException e) {
-            printStackTrace("Failed to close connection", e);
-        }
+    public static void closeConnection() throws SQLException {
+        connection.close();
     }
 
     private static void printStackTrace(final String description, Exception exception) {
@@ -404,7 +399,7 @@ public class DatabaseManager {
         if (match) {
             sql = "SELECT * FROM accounts " +
                     "INNER JOIN cards ON account_no=card_linked_account " +
-                    "WHERE (account_no=? AND customer_name=? AND customer_surname=?) OR card_no=?" +
+                    "WHERE account_no=? OR (customer_name=? AND customer_surname=?) OR card_no=?" +
                     "GROUP BY account_no ORDER BY card_issue_date DESC;";
         } else {
             sql = "SELECT * FROM accounts " +

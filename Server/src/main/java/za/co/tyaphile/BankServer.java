@@ -38,7 +38,6 @@ public class BankServer implements Executor {
     }
 
     public static String processRequest(String input) {
-        System.out.println("<<< " + input);
         Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
 
         System.out.println(">>> " + request);
@@ -90,7 +89,7 @@ public class BankServer implements Executor {
 
     private static String searchAccount(Map<String, Object> request) throws NullPointerException {
         if (request.containsKey("params") && request.containsKey("params")) {
-            Map<?, ?> data = (Map<?, ?>) request.get("search");
+            Map<?, ?> data = (Map<?, ?>) request.get("params");
             String name = data.get("name").toString();
             String surname = data.get("surname").toString();
             String card = data.get("card").toString();

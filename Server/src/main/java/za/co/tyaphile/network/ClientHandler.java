@@ -31,14 +31,10 @@ public class ClientHandler implements Runnable {
     }
 
 
-    private void sendMessage(Object response) {
-        try {
-            ObjectOutputStream output = new ObjectOutputStream(socket.getOutputStream());
-            output.writeObject(response);
-            output.flush();
-        } catch (IOException e) {
-            printStackTrace("Send message error", e);
-        }
+    private void sendMessage(Object response) throws IOException {
+        ObjectOutputStream output = new ObjectOutputStream(socket.getOutputStream());
+        output.writeObject(response);
+        output.flush();
     }
 
     private void printStackTrace(String message, Exception e) {
