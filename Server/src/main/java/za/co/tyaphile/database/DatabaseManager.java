@@ -688,7 +688,7 @@ public class DatabaseManager {
         boolean isCardHold = getCurrentCard(account).values().stream()
                 .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
 
-        if(isOnHold || !isCardHold && !getCurrentCard(account).isEmpty()) {
+        if(isOnHold || (!isCardHold && !getCurrentCard(account).isEmpty())) {
             return false;
         }
         PreparedStatement ps = null;

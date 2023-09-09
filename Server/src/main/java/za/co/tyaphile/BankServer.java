@@ -41,8 +41,6 @@ public class BankServer implements Executor {
     public static String processRequest(String input) {
         Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
 
-        System.out.println(">>> " + request);
-
         try {
             switch (request.get("action").toString().trim().toLowerCase()) {
                 case "open":
@@ -51,19 +49,44 @@ public class BankServer implements Executor {
                     return searchAccount(request);
                 case "transact":
                     return accountTransact(request);
+                case "card":
+                    return getCard(request);
                 case "issue":
                     boolean success = DatabaseManager.issueCard(request);
                     if (success)
-                        return getState(true, true);
+                        return getState("Card issued successfully", true);
                     return getState("Card issue failed", false);
-                case "card":
-                    return getCard(request);
+                case "manage":
+                    if (request.get("item").toString().equalsIgnoreCase("card")) {
+                        return manageCard(request);
+                    } else if (request.get("item").toString().equalsIgnoreCase("account")) {
+
+                    } else {
+                        getState("Need to define Card or Account management", false);
+                    }
                 default:
-                    return getState("Failed to process request", false);
+                    return getState("Invalid option", false);
             }
         } catch (NullPointerException e) {
             return getState("Failed to process request", false);
         }
+    }
+
+    private static String manageAccount(Map<String, Object> request) throws NullPointerException {
+        System.out.println(request);
+        boolean success = DatabaseManager.issueCard((Map<String, Object>) request.get("data"));
+
+        if (success) return getState("Action successful", true);
+        return getState("Action failed, please try again", false);
+    }
+
+    private static String manageCard(Map<String, Object> request) throws NullPointerException {
+        System.out.println(request);
+//        String card = , String admin, String note, boolean isHold, boolean isStop
+        boolean success = false;
+
+        if (success) return getState("Action successful", true);
+        return getState("Action failed, please try again", false);
     }
 
     private static String getCard(Map<String, Object> request) throws NullPointerException {
@@ -78,8 +101,10 @@ public class BankServer implements Executor {
     private static String accountTransact(Map<String, Object> request) throws NullPointerException {
         Map<?, ?> data = (Map<?, ?>) request.get("data");
 
-        BigDecimal accFrom = new BigDecimal(Double.valueOf(data.get("payer").toString()), new MathContext(0));
-        BigDecimal accTo = new BigDecimal(Double.valueOf(data.get("beneficiary").toString()), new MathContext(0));
+        BigDecimal accFrom = new BigDecimal(Double.valueOf(data.get("payer").toString()),
+                new MathContext(0));
+        BigDecimal accTo = new BigDecimal(Double.valueOf(data.get("beneficiary").toString()),
+                new MathContext(0));
 
         long from = accFrom.longValue();
         long to = accTo.longValue();

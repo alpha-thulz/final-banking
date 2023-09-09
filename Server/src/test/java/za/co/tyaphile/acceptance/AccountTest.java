@@ -1,18 +1,21 @@
 package za.co.tyaphile.acceptance;
 
 import com.google.gson.Gson;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import za.co.tyaphile.BankServer;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,6 +23,70 @@ public class AccountTest {
     private static Socket socket;
     private final Gson json = new Gson();
     private static Map<String, Object> john;
+
+
+
+    @Test
+    void testCardIssuePass() throws IOException, ClassNotFoundException {
+//        john.put("action", "query");
+//        john.put("search", "Doe");
+//        john.put("admin", "Admin");
+//        john.remove("params");
+//        john.remove("search");
+//
+//        Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+//        String acc = ((ArrayList<Map<?, ?>>)result.get("data")).get(0).get("account_number").toString();
+//
+//
+//
+//        john.put("account", acc.replaceAll("-", ""));
+//        john.put("action", "issue");
+//        result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+//        assertEquals("Card issue failed", result.get("message"));
+//        assertFalse((Boolean) result.get("successful"));
+    }
+
+    @Test
+    void testCardIssueFail() throws IOException, ClassNotFoundException {
+        john.put("action", "query");
+        john.put("search", "Doe");
+        john.put("admin", "Admin");
+        john.remove("params");
+        john.remove("search");
+
+        Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+        String acc = ((ArrayList<Map<?, ?>>)result.get("data")).get(0).get("account_number").toString();
+
+        john.put("account", acc.replaceAll("-", ""));
+        john.put("action", "issue");
+        result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+        assertEquals("Card issue failed", result.get("message"));
+        assertFalse((Boolean) result.get("successful"));
+    }
+
+    @Test
+    void testGetActiveCard() throws IOException, ClassNotFoundException {
+        john.put("action", "query");
+        john.put("search", "Doe");
+        john.put("admin", "Admin");
+        john.remove("params");
+        john.remove("search");
+
+        Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+        String acc = ((ArrayList<Map<?, ?>>)result.get("data")).get(0).get("account_number").toString().replaceAll("-", "");
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("account", acc);
+        john.put("data", data);
+        john.put("action", "card");
+        result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+        assertTrue((Boolean) result.get("successful"));
+        assertEquals(1, ((Map<?, ?>) result.get("data")).size());
+
+        for (Map.Entry<?, ?> entry:( (Map<?, ?>) result.get("data")).entrySet()) {
+            assertEquals(6, ((Map<?, ?>) entry.getValue()).size());
+        }
+    }
 
     @Test
     void testAccountTransact() throws IOException, ClassNotFoundException {
