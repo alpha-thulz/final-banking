@@ -12,7 +12,6 @@ public class ClientHandler implements Runnable {
 
     public ClientHandler(Socket socket) {
         this.socket = socket;
-        System.out.println("Connection established on " + socket.getPort());
     }
 
     @Override

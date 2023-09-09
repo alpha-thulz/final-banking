@@ -1,6 +1,5 @@
 package za.co.tyaphile;
 
-
 import com.google.gson.Gson;
 import za.co.tyaphile.account.Account;
 import za.co.tyaphile.database.Connector.Connect;
@@ -9,6 +8,8 @@ import za.co.tyaphile.info.Info;
 import za.co.tyaphile.network.Connector;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -77,14 +78,23 @@ public class BankServer implements Executor {
     private static String accountTransact(Map<String, Object> request) throws NullPointerException {
         Map<?, ?> data = (Map<?, ?>) request.get("data");
 
-        long from = Integer.parseInt(data.get("payer").toString());
-        long to = Integer.parseInt(data.get("beneficiary").toString());
+        BigDecimal accFrom = new BigDecimal(Double.valueOf(data.get("payer").toString()), new MathContext(0));
+        BigDecimal accTo = new BigDecimal(Double.valueOf(data.get("beneficiary").toString()), new MathContext(0));
+
+        long from = accFrom.longValue();
+        long to = accTo.longValue();
         String desc = data.get("description").toString();
         String type = data.get("type").toString();
         double amount = Double.parseDouble(data.get("amount").toString());
         boolean fromAccount = (Boolean) data.get("from_account");
 
-        return getState(DatabaseManager.makeTransaction(from, to, desc, type, amount, fromAccount), true);
+        boolean success = DatabaseManager.makeTransaction(from, to, desc, type, amount, fromAccount);
+        Map<String, String> result = new HashMap<>();
+
+        if (success) result.put("message", "Transaction successful") ;
+        else result.put("message", "Transaction failed");
+
+        return getState(result, success);
     }
 
     private static String searchAccount(Map<String, Object> request) throws NullPointerException {
@@ -123,7 +133,10 @@ public class BankServer implements Executor {
         return json.toJson(results);
     }
 
-    public static void main(String... args) throws IOException { new BankServer(); }
+    public static void main(String... args) throws IOException {
+        new BankServer();
+        System.out.println("Server started...");
+    }
 
     @Override
     public void execute(Runnable command) {

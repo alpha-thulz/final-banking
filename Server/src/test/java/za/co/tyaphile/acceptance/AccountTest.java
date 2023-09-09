@@ -4,11 +4,9 @@ import com.google.gson.Gson;
 import org.junit.jupiter.api.*;
 import za.co.tyaphile.BankServer;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.*;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,18 +14,53 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class AccountTest {
     private static Socket socket;
-    private static ExecutorService service;
     private final Gson json = new Gson();
     private static Map<String, Object> john;
 
     @Test
+    void testAccountTransact() throws IOException, ClassNotFoundException {
+        john.put("action", "query");
+        john.put("search", "Doe");
+        john.remove("params");
+        john.remove("admin");
+        john.remove("search");
+
+        Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
+        String acc = ((ArrayList<Map<?, ?>>)result.get("data")).get(0).get("account_number").toString();
+
+        john.put("action", "transact");
+        Map<String, Object> data = new HashMap<>();
+        data.put("payer", 100000000);
+        data.put("beneficiary", Long.parseLong(acc.replaceAll("-", "").trim()));
+        data.put("description", "Testing");
+        data.put("type", "ATM");
+        data.put("amount", 100);
+        data.put("from_account", false);
+        john.put("data", data);
+
+        result = json.fromJson(sendRequest(john), Map.class);
+        assertEquals("Transaction successful", ((Map<?, ?>) result.get("data")).get("message"));
+        assertTrue((Boolean) result.get("successful"));
+    }
+
+    @Test
+    void testAccountTransactNoDetailsProvidedFails() throws IOException, ClassNotFoundException {
+        john.remove("admin");
+        john.put("action", "transact");
+
+        Map<?, ?> results = json.fromJson(sendRequest(john), Map.class);
+        assertEquals("Failed to process request", results.get("message"));
+        assertFalse((Boolean) results.get("successful"));
+    }
+
+    @Test
     void testAccountSearchWithParams() throws IOException, ClassNotFoundException {
         john.put("action", "query");
+        john.remove("admin");
         Map<String, Object> data = new HashMap<>();
         data.put("name", "John");
         data.put("surname", "Doe");
@@ -47,8 +80,9 @@ public class AccountTest {
     void testAccountSearchWithSearch() throws IOException, ClassNotFoundException {
         john.put("action", "query");
         john.put("search", "Doe");
+        john.remove("params");
+        john.remove("admin");
         Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
-        System.out.println("result: " + result);
         assertTrue((Boolean) result.get("successful"));
         assertInstanceOf(List.class, result.get("data"));
     }
@@ -56,6 +90,7 @@ public class AccountTest {
     @Test
     void testAccountSearchDefault() throws IOException, ClassNotFoundException {
         john.put("action", "query");
+        john.remove("admin");
         Map<?, ?> result = (Map<?, ?>) json.fromJson(sendRequest(john), Map.class);
         assertTrue((Boolean) result.get("successful"));
         assertInstanceOf(List.class, result.get("data"));
@@ -78,11 +113,8 @@ public class AccountTest {
     }
 
     @AfterAll
-    static void cleanUp() throws InterruptedException, IOException {
+    static void cleanUp() throws IOException {
         socket.close();
-        if (!service.awaitTermination(2, TimeUnit.SECONDS)) {
-            service.shutdownNow();
-        }
 
         File file = new File("finance.db");
         if (file.exists()) file.delete();
@@ -97,14 +129,8 @@ public class AccountTest {
         john.put("surname", "Doe");
         john.put("type", "Savings");
 
-        service = Executors.newSingleThreadExecutor();
-        service.execute(() -> {
-            try {
-                BankServer.main();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
+        BankServer.main();
+
         Thread.sleep(500);
         socket = new Socket("localhost", 5555);
     }

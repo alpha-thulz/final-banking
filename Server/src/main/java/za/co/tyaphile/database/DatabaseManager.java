@@ -543,6 +543,7 @@ public class DatabaseManager {
                 " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
 
         PreparedStatement ps = null;
+
         try {
 
             String card = null;
