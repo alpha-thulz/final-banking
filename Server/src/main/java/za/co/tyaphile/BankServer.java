@@ -55,7 +55,7 @@ public class BankServer implements Executor {
                 case "card":
                     return getCard(request);
                 case "issue":
-                    boolean success = DatabaseManager.issueCard((Map<String, Object>) request);
+                    boolean success = DatabaseManager.issueCard(request);
                     if (success)
                         return getState("Card issued successfully", true);
                     return getState("Card issue failed", false);
@@ -80,7 +80,7 @@ public class BankServer implements Executor {
         System.out.println(request);
         boolean success = DatabaseManager.issueCard((Map<String, Object>) request.get("data"));
 
-        if (success) return getState("Action successful", true);
+        if (success) return getState("Account action successful", true);
         return getState("Action failed, cannot manage account", false);
     }
 
@@ -89,12 +89,13 @@ public class BankServer implements Executor {
         String admin = request.get("admin").toString();
         String card = df.format(Double.parseDouble(request.get("account").toString()));
         String note = request.get("note").toString();
-        boolean isHold = (Boolean) request.get("isHold");
-        boolean isStop = (Boolean) request.get("isStop");
+        boolean isHold = request.containsKey("isHold") ? (Boolean) request.get("isHold") : false;
+        boolean isStop = request.containsKey("isStop") ? (Boolean) request.get("isStop") : false;
+        boolean isFraud = request.containsKey("isFraud") ? (Boolean) request.get("isFraud") : false;
 
-        boolean success = DatabaseManager.cardControl(card, admin, note, isHold, isStop);
+        boolean success = DatabaseManager.cardControl(card, admin, note, isHold, isStop, isFraud);
 
-        if (success) return getState("Action successful", true);
+        if (success) return getState("Card action successful", true);
         return getState("Action failed, cannot manage card", false);
     }
 

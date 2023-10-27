@@ -55,22 +55,28 @@ public class DatabaseManager {
         return false;
     }
 
-    public static boolean cardControl(String card, String admin, String note, boolean isHold, boolean isStop) {
+    public static boolean cardControl(String card, String admin, String note, boolean isHold, boolean isStop, boolean isFraud) {
         PreparedStatement ps = null;
 
         if (addNote(card, admin, note)) {
             try {
-                String sql = "UPDATE cards SET card_hold = ?, card_fraud = ? WHERE card_no = ?;";
+                String sql = "UPDATE cards SET card_hold = ?, card_stop=?, card_fraud = ? WHERE card_no = ?;";
                 setConnection();
                 ps = connection.prepareStatement(sql);
-                ps.setBoolean(1, isHold);
-                ps.setBoolean(2, isStop);
-                ps.setString(3, card);
+                if (isFraud) {
+                    ps.setBoolean(1, true);
+                    ps.setBoolean(2, true);
+                } else {
+                    ps.setBoolean(1, isHold);
+                    ps.setBoolean(2, isStop);
+                }
+                ps.setBoolean(3, isFraud);
+                ps.setString(4, Card.formatCardNumber(card.replaceAll("\\s+", "")));
 
                 ps.executeUpdate();
+                return true;
             } catch (SQLException e) {
                 printStackTrace("Card update error", e);
-                return false;
             } finally {
                 try {
                     connection.close();
@@ -80,7 +86,7 @@ public class DatabaseManager {
                 }
             }
         }
-        return true;
+        return false;
     }
 
     private static String getFormatCardNumber(String number) {
@@ -447,6 +453,7 @@ public class DatabaseManager {
                 acc.put("open_date", rs.getTimestamp("account_open_date"));
                 acc.put("card", rs.getString("card_no"));
                 acc.put("card_hold", rs.getBoolean("card_hold"));
+                acc.put("card_stop", rs.getBoolean("card_stop"));
                 acc.put("card_fraud", rs.getBoolean("card_fraud"));
                 acc.put("issue_date", rs.getTimestamp("card_issue_date"));
                 acc.put("notes", getNotes(rs.getString("account_no")));
@@ -469,12 +476,10 @@ public class DatabaseManager {
 
     public static boolean issueCard(Map<String, Object> request) {
         String account = request.get("account").toString(), admin = request.get("admin").toString();
-        boolean isOnHold = request.containsKey("hold") && (Boolean) request.get("hold");
-
         boolean isCardHold = getCurrentCard(account).values().stream()
-                .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
+                .anyMatch(x -> ((Boolean) x.get("card_fraud") || (Boolean) x.get("card_stop")));
 
-        if(isOnHold || (!isCardHold && !getCurrentCard(account).isEmpty())) {
+        if(!isCardHold && !getCurrentCard(account).isEmpty()) {
             return false;
         }
         PreparedStatement ps = null;
@@ -523,8 +528,8 @@ public class DatabaseManager {
                 cardDetails.put("card", cardNumber);
                 cardDetails.put("card_pin", rs.getString("card_pin"));
                 cardDetails.put("card_cvv", rs.getString("card_cvv"));
-//                cardDetails.put("card_stop", )
                 cardDetails.put("card_fraud", rs.getBoolean("card_fraud"));
+                cardDetails.put("card_stop", rs.getBoolean("card_stop"));
                 cardDetails.put("card_hold", rs.getBoolean("card_hold"));
                 cardDetails.put("remarks", getNotes(cardNumber));
                 card.put(param, cardDetails);
@@ -560,6 +565,7 @@ public class DatabaseManager {
                 card.put("card_pin", rs.getString("card_pin"));
                 card.put("card_cvv", rs.getString("card_cvv"));
                 card.put("card_fraud", rs.getBoolean("card_fraud"));
+                card.put("card_stop", rs.getBoolean("card_stop"));
                 card.put("card_hold", rs.getBoolean("card_hold"));
                 card.put("remarks", getNotes(cardNumber));
                 cards.add(card);
@@ -694,6 +700,7 @@ public class DatabaseManager {
                     "    card_pin VARCHAR(4) NOT NULL, \n" +
                     "    card_cvv VARCHAR(3) NOT Null, \n" +
                     "    card_hold TINYINT(1) DEFAULT 0, \n" +
+                    "    card_stop TINYINT(1) DEFAULT 0, \n" +
                     "    card_fraud TINYINT(1) DEFAULT 0, " +
                     "    card_issue_date TIMESTAMP DEFAULT (datetime('now','localtime'))\n" +
                     ");";
@@ -738,6 +745,7 @@ public class DatabaseManager {
                     "    card_pin VARCHAR(4) NOT NULL, \n" +
                     "    card_cvv VARCHAR(3) NOT Null, \n" +
                     "    card_hold TINYINT(1) DEFAULT 0, \n" +
+                    "    card_stop TINYINT(1) DEFAULT 0, \n" +
                     "    card_fraud TINYINT(1) DEFAULT 0, " +
                     "    card_issue_date TIMESTAMP DEFAULT (datetime('now','localtime'))\n" +
                     ");";

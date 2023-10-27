@@ -24,7 +24,7 @@ public class DatabaseTest {
             Map<String, Map<String, Object>> result = DatabaseManager.getCurrentCard(jane.get("account").toString());
             assertTrue(DatabaseManager.cardControl(
                     ((Map<?, ?>) result.get(jane.get("account").toString())).get("card").toString(),
-                    "Admin", "Stop " + i, true, false));
+                    "Admin", "Stop " + i, false, true, false));
             assertTrue(DatabaseManager.issueCard(jane));
         }
         assertEquals(101, DatabaseManager.getLinkedCards(jane.get("account").toString()).size());
@@ -72,7 +72,7 @@ public class DatabaseTest {
         String originalCard = request.get("card").toString();
         assertNotNull(originalCard);
         assertFalse(DatabaseManager.issueCard(john));
-        assertTrue(DatabaseManager.cardControl(originalCard, "Admin", "Stop test", true, false));
+        assertTrue(DatabaseManager.cardControl(originalCard, "Admin", "Stop test", false, false, true));
         assertTrue(DatabaseManager.issueCard(john));
         request = DatabaseManager.getCurrentCard(account).get(account);
         String newCard = request.get("card").toString();
