@@ -1,6 +1,7 @@
 package za.co.tyaphile;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import za.co.tyaphile.account.Account;
 import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.database.DatabaseManager;
@@ -10,6 +11,8 @@ import za.co.tyaphile.network.Connector;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -18,7 +21,7 @@ import java.util.concurrent.Executors;
 public class BankServer implements Executor {
     private final int port = 5555;
     public static boolean MySQL;
-    private static Gson json = new Gson();
+    private static final Gson json = new GsonBuilder().create();
 
     public static boolean isMySQL() {
         return MySQL;
@@ -39,8 +42,8 @@ public class BankServer implements Executor {
     }
 
     public static String processRequest(String input) {
-        Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
 
+        Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
         try {
             switch (request.get("action").toString().trim().toLowerCase()) {
                 case "open":
@@ -52,17 +55,18 @@ public class BankServer implements Executor {
                 case "card":
                     return getCard(request);
                 case "issue":
-                    boolean success = DatabaseManager.issueCard(request);
+                    boolean success = DatabaseManager.issueCard((Map<String, Object>) request);
                     if (success)
                         return getState("Card issued successfully", true);
                     return getState("Card issue failed", false);
                 case "manage":
-                    if (request.get("item").toString().equalsIgnoreCase("card")) {
-                        return manageCard(request);
-                    } else if (request.get("item").toString().equalsIgnoreCase("account")) {
-
+                    String item = ((Map<String, Object>) request.get("data")).get("item").toString();
+                    if (item.equalsIgnoreCase("card")) {
+                        return manageCard((Map<String, Object>) request.get("data"));
+                    } else if (item.equalsIgnoreCase("account")) {
+                        return manageAccount((Map<String, Object>) request.get("data"));
                     } else {
-                        getState("Need to define Card or Account management", false);
+                        return getState("Need to define Card or Account management", false);
                     }
                 default:
                     return getState("Invalid option", false);
@@ -77,16 +81,21 @@ public class BankServer implements Executor {
         boolean success = DatabaseManager.issueCard((Map<String, Object>) request.get("data"));
 
         if (success) return getState("Action successful", true);
-        return getState("Action failed, please try again", false);
+        return getState("Action failed, cannot manage account", false);
     }
 
     private static String manageCard(Map<String, Object> request) throws NullPointerException {
-        System.out.println(request);
-//        String card = , String admin, String note, boolean isHold, boolean isStop
-        boolean success = false;
+        DecimalFormat df = new DecimalFormat("0");
+        String admin = request.get("admin").toString();
+        String card = df.format(Double.parseDouble(request.get("account").toString()));
+        String note = request.get("note").toString();
+        boolean isHold = (Boolean) request.get("isHold");
+        boolean isStop = (Boolean) request.get("isStop");
+
+        boolean success = DatabaseManager.cardControl(card, admin, note, isHold, isStop);
 
         if (success) return getState("Action successful", true);
-        return getState("Action failed, please try again", false);
+        return getState("Action failed, cannot manage card", false);
     }
 
     private static String getCard(Map<String, Object> request) throws NullPointerException {

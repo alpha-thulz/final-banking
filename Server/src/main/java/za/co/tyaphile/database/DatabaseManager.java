@@ -469,7 +469,7 @@ public class DatabaseManager {
 
     public static boolean issueCard(Map<String, Object> request) {
         String account = request.get("account").toString(), admin = request.get("admin").toString();
-        boolean isOnHold = request.get("hold") != null && (Boolean) request.get("hold");
+        boolean isOnHold = request.containsKey("hold") && (Boolean) request.get("hold");
 
         boolean isCardHold = getCurrentCard(account).values().stream()
                 .anyMatch(x -> ((Boolean) x.get("card_hold") || (Boolean) x.get("card_fraud")));
@@ -523,7 +523,7 @@ public class DatabaseManager {
                 cardDetails.put("card", cardNumber);
                 cardDetails.put("card_pin", rs.getString("card_pin"));
                 cardDetails.put("card_cvv", rs.getString("card_cvv"));
-
+//                cardDetails.put("card_stop", )
                 cardDetails.put("card_fraud", rs.getBoolean("card_fraud"));
                 cardDetails.put("card_hold", rs.getBoolean("card_hold"));
                 cardDetails.put("remarks", getNotes(cardNumber));
