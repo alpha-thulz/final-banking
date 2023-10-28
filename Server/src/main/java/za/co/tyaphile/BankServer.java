@@ -2,6 +2,7 @@ package za.co.tyaphile;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import org.jetbrains.annotations.NotNull;
 import za.co.tyaphile.account.Account;
 import za.co.tyaphile.database.Connector.Connect;
 import za.co.tyaphile.database.DatabaseManager;
@@ -15,6 +16,7 @@ import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -26,6 +28,7 @@ public class BankServer implements Executor {
     public static boolean isMySQL() {
         return MySQL;
     }
+    private static String[] type = {"Private", "Premier", "Gold", "Silver", "Platinum"};
 
     public BankServer() throws IOException {
         init();
@@ -43,8 +46,8 @@ public class BankServer implements Executor {
 
     public static String processRequest(String input) {
 
-        Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
         try {
+            Map<String, Object> request = (Map<String, Object>) json.fromJson(input, Map.class);
             switch (request.get("action").toString().trim().toLowerCase()) {
                 case "open":
                     return openAccount(request);
@@ -72,6 +75,7 @@ public class BankServer implements Executor {
                     return getState("Invalid option", false);
             }
         } catch (NullPointerException e) {
+            printStackTrace("Failed to process request", e);
             return getState("Failed to process request", false);
         }
     }
@@ -171,15 +175,59 @@ public class BankServer implements Executor {
     public static void main(String... args) throws IOException {
         new BankServer();
         System.out.println("Server started...");
+        if (DatabaseManager.getAccounts().isEmpty()) {
+            Random random = new Random();
+            outer:
+            for (int i = 0; i < generateTestAccounts().length; i++) {
+                for (int j = 0; j < i + 1; i++) {
+                    if (generateTestAccounts().length == i) break outer;
+                    Map<String, Object> account = new HashMap<>(Map.of(
+                            "name", generateTestAccounts()[i][0],
+                            "surname",generateTestAccounts()[i][1],
+                            "type", type[random.nextInt(type.length)],
+                            "admin", "Admin",
+                            "action", "open"
+                    ));
+                    openAccount(account);
+                }
+            }
+            System.out.println(DatabaseManager.getAccounts());
+        }
+    }
+
+    private static String[][] generateTestAccounts() {
+        return new String[][]{
+                {"Zachary", "Pierce"},
+                {"Safia", "Sutherland"},
+                {"Bailey", "Owen"},
+                {"Callum", "Ballard"},
+                {"Nathan", "Walls"},
+                {"Malik", "Knowles"},
+                {"Alfie", "Barber"},
+                {"Bibi", "Copeland"},
+                {"Denzel", "Hilton"},
+                {"Aiza", "Meza"},
+                {"Benjamin", "Berry"},
+                {"Jac", "Garrett"},
+                {"Tamsin", "O'Doherty"},
+                {"Philippa", "Swanson"},
+                {"Seamus", "Daugherty"},
+                {"John", "Doe"},
+                {"Jane", "Doe"}
+        };
     }
 
     @Override
-    public void execute(Runnable command) {
+    public void execute(@NotNull Runnable command) {
         Executor executor = Executors.newSingleThreadExecutor();
         executor.execute(command);
     }
 
-    private void printStackTrace(String message, Exception e) {
+    public static String[] getAccountTypes() {
+        return type;
+    }
+
+    private static void printStackTrace(String message, Exception e) {
         System.err.println(message + ": " + e.getMessage());
         for (StackTraceElement ste:e.getStackTrace()) {
             System.err.println(ste);

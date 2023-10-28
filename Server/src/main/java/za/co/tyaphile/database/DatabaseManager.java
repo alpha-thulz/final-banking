@@ -9,10 +9,7 @@ import za.co.tyaphile.info.Info;
 import java.sql.*;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -197,6 +194,8 @@ public class DatabaseManager {
 
     public static synchronized boolean makeTransaction(long from, long to, String desc, String type, double amount, boolean fromAccount) {
         boolean successful = false;
+        Random random = new Random();
+        long transactionID = Math.abs(random.nextLong());
 
         String sql = "INSERT INTO transact (transact_account, transact_beneficiary, transact_description," +
                 " transact_type, transaction_amount) VALUES (?, ?, ?, ?, ?);";
@@ -372,6 +371,9 @@ public class DatabaseManager {
     public static List<Map<String, Object>> getAccounts() {
         List<Map<String, Object>> accounts = new ArrayList<>();
         String sql = "SELECT * FROM accounts INNER JOIN cards ON account_no=card_linked_account GROUP BY account_no;";
+        sql = "SELECT * FROM accounts " +
+                "INNER JOIN cards ON account_no=card_linked_account " +
+                "GROUP BY account_no ORDER BY card_issue_date DESC;";
         PreparedStatement ps = null;
         ResultSet rs = null;
         try {
@@ -381,11 +383,22 @@ public class DatabaseManager {
 
             while (rs.next()) {
                 Map<String, Object> acc = new HashMap<>();
+                acc.put("account_number", formatAccount(rs.getString("account_no")));
                 acc.put("name", rs.getString("customer_name"));
                 acc.put("surname", rs.getString("customer_surname"));
-                acc.put("account_number", formatAccount(rs.getString("account_no")));
                 acc.put("type", rs.getString("account_type"));
+                acc.put("on_hold", rs.getBoolean("account_hold"));
+                acc.put("on_close", rs.getBoolean("account_close"));
                 acc.put("balance", rs.getDouble("balance"));
+                acc.put("overdraft_balance", rs.getDouble("overdraft_balance"));
+                acc.put("overdraft_limit", rs.getDouble("overdraft_limit"));
+                acc.put("open_date", rs.getTimestamp("account_open_date"));
+                acc.put("card", rs.getString("card_no"));
+                acc.put("card_hold", rs.getBoolean("card_hold"));
+                acc.put("card_stop", rs.getBoolean("card_stop"));
+                acc.put("card_fraud", rs.getBoolean("card_fraud"));
+                acc.put("issue_date", rs.getTimestamp("card_issue_date"));
+                acc.put("notes", getNotes(rs.getString("account_no")));
                 accounts.add(acc);
             }
         } catch (SQLException e) {

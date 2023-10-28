@@ -6,46 +6,50 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
 public class Client {
     private static final String HOST = "localhost";
-    private Socket socket = null;
-    private final String ADMIN = "Administrator";
+    private static Socket socket = null;
+    private static final String ADMIN = "Administrator";
     private static final int PORT = 5555;
-    private final Gson json = new Gson();
+    private static final Gson json = new Gson();
+    private static String[] type = {"Private", "Premier", "Gold", "Silver", "Platinum"};
 
     Client() {
         try {
             socket = new Socket(HOST, PORT);
-            listenSession().start();
-        } catch (IOException e) {
+            ArrayList<Map<?, ?>> accounts = (ArrayList<Map<?, ?>>) sendRequest(searchAccount()).get("data");
+            for (Map<?, ?> account:accounts) {
+                String name = account.get("name").toString();
+                String surname = account.get("surname").toString();
+                String acc = account.get("account_number").toString();
+                String accType = account.get("type").toString();
+                Boolean accClosed = (Boolean) account.get("on_close");
+                System.out.printf("%s %s -> %s %s %b\n", name, surname, acc, accType, accClosed);
+            }
+        } catch (IOException | ClassNotFoundException e) {
             e.printStackTrace();
         }
     }
 
-    private Thread listenSession() {
-        return new Thread(() -> {
-            while (!socket.isClosed()) {
-                try {
-                    ObjectInputStream input = new ObjectInputStream(socket.getInputStream());
-                    Object object = input.readObject();
-                    System.out.println(object);
-                } catch (IOException | ClassNotFoundException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
+    public static String[] getAccountTypes() {
+        return type;
     }
 
-    private void sendRequest(Object obj) throws IOException {
+    public static Map<String, Object> sendRequest(Object obj) throws IOException, ClassNotFoundException {
         ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
         out.writeObject(json.toJson(obj));
+        ObjectInputStream input = new ObjectInputStream(socket.getInputStream());
+        Object object = input.readObject();
+        return json.fromJson(object.toString(), Map.class);
     }
 
     public static void main(String... args) {
         new Client();
+        new MainWindow();
     }
 
     private Map<String, Object> controlCard(String card, String note, boolean isHold, boolean isStop, boolean isFraud) {
@@ -92,7 +96,7 @@ public class Client {
         return request;
     }
 
-    private Map<String, String> searchAccount() {
+    public static  Map<String, String> searchAccount() {
         Map<String, String> request = new HashMap<>();
 
         request.put("action", "query");
@@ -100,7 +104,7 @@ public class Client {
         return request;
     }
 
-    private Map<String, String> searchAccount(String param) {
+    public static Map<String, String> searchAccount(String param) {
         Map<String, String> request = new HashMap<>();
 
         request.put("action", "query");
@@ -109,19 +113,28 @@ public class Client {
         return request;
     }
 
-    private Map<String, String> searchAccount(String name, String surname, String account, String card) {
-        Map<String, String> request = new HashMap<>();
-
+    public static Map<String, Object> searchAccount(String name, String surname, String account, String card, boolean isComplete) {
+        Map<String, Object> request = new HashMap<>();
         request.put("action", "query");
-        request.put("name", name);
-        request.put("surname", surname);
-        request.put("account", account);
-        request.put("card", card);
+
+        if (isComplete) {
+            request.put("params", Map.of(
+                    "name", name,
+                    "surname", surname,
+                    "account", account,
+                    "card", card
+            ));
+        } else {
+            request.put("name", name);
+            request.put("surname", surname);
+            request.put("account", account);
+            request.put("card", card);
+        }
 
         return request;
     }
 
-    private Map<String, String> openAccount(String name, String surname, String accountType) {
+    public static Map<String, String> openAccount(String name, String surname, String accountType) {
         Map<String, String> request = new HashMap<>();
 
         request.put("name", name);
